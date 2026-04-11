@@ -301,6 +301,8 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     uint8_t is_dir = 0;
     uint8_t is_ads = 0;
 
+	bool found = false;
+
     hrec = (FILE_RECORD_HEADER *)buf;
     if (hrec->first_attr_offset >= record_size)
         return;
@@ -375,7 +377,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     // attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
 
-                bool found = false; // marker so itself isnt appended to links
+                found = false; // marker so itself isnt appended to links
                 // get the first name prefer Windows or Windows&Dos
                 if (!got_best_name) {
                     got_name = 1;
@@ -1145,7 +1147,7 @@ int main(int argc, char *argv[]) {
 
                 // recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path 
                 if (cutoff_time == 0 && !has_target) {
-                    return 0;
+
                     for (uint32_t recno = 0; recno < entry_capacity; recno++) {
                         if (!entries[recno].in_use)
                             continue;
@@ -1233,7 +1235,7 @@ int main(int argc, char *argv[]) {
                             // (unsigned long long)entries[i].parent_frn,
                             // entries[i].name,
                             // path,
-                            // entries[i].is_dir ? " [DIR]" : "");        
+                            // entries[i].is_dir ? " [DIR]" : "");
 
                     }
                     
