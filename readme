@@ -3,7 +3,7 @@ Parse master file table written in C
 
 Updates to follow but the structure is complete and tested. Will add more finish to it such as system time currently its UTC which is -7:00 where 
 I am. The filesize of the parser is 170kb and it is fairly fast. I chose to write it in C as its perfectly suited for the task and I also needed 
-a solution for Qt application. 
+a solution for my Qt application. 
 
 usage:
 optional drive (default C:)
