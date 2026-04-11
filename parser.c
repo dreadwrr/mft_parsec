@@ -137,6 +137,7 @@ typedef struct {
     uint8_t dir_path_ready;
     uint8_t in_use;
     uint8_t is_dir;
+	uint8_t is_ads;
     uint16_t hard_link_count;
 	uint32_t file_attribs;
     uint64_t creation_time;
@@ -237,12 +238,16 @@ void EnsureLinkCapacity(void) {
 void EnsureEntryCapacity(uint32_t recno) {
     if (recno < entry_capacity)
         return;
-    // printf("EnsureEntryCapacity recno=%lu\n", (unsigned long)recno);  // debug
+    // printf("EnsureEntryCapacity recno=%lu\n", (unsigned long)recno);  // debug disabled for performance
     uint32_t new_capacity = entry_capacity ? entry_capacity : 1024;
 
-    while (new_capacity <= recno) {
-        new_capacity *= 2;
-    }
+	while (new_capacity <= recno) {
+		if (new_capacity > UINT32_MAX / 2) {
+			printf("ensure capacity overflow\n");
+			exit(1);
+		}
+		new_capacity *= 2;
+	}
 
     FileEntry *new_entries = (FileEntry *)realloc(entries, new_capacity * sizeof(FileEntry));
     if (!new_entries) {
@@ -293,6 +298,9 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     char name[1024] = {0};
 	uint64_t size = 0;
 
+	uint8_t is_dir = 0;
+	uint8_t is_ads = 0;
+
     hrec = (FILE_RECORD_HEADER *)buf;
     if (hrec->first_attr_offset >= record_size)
         return;
@@ -304,7 +312,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 	// not in use
     if (!(hrec->flags & 0x0001))
         return;
-	uint8_t is_dir = (hrec->flags & 0x0002) ? 1 : 0;
+	is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 	
 	if (hrec->base_record != 0) {
 		return;
@@ -397,14 +405,15 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         // if (attr->type == 0x40) {
 			// break;
         // }
-        // if (attr->type == 0x80) {
-            // if (attr->name_length != 0) {
+        if (attr->type == 0x80) {
+            if (attr->name_length != 0) {
 				// skip ADS
 				// attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
 				// continue;
-            // }
-
-        // }
+				is_ads = 1;
+				break;
+            }
+        }
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
     }
 
@@ -426,6 +435,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 		entries[recno].size = size;
         entries[recno].in_use = 1;
         entries[recno].is_dir = is_dir;
+		entries[recno].is_ads = is_ads;
         entries[recno].hard_link_count = hrec->hard_link_count;
 		// entries[recno].links_appended = p;
 		entries[recno].file_attribs = file_attribs;
@@ -1123,6 +1133,8 @@ int main(int argc, char *argv[]) {
 							continue;
 						if (!entries[recno].name)
 							continue;
+						if (entries[recno].is_ads)
+							continue;
 
 						if (BuildPath(recno, path, sizeof(path))) {
 							
@@ -1175,6 +1187,8 @@ int main(int argc, char *argv[]) {
 						if (!entries[i].in_use)
 							continue;
 						if (!entries[i].name)
+							continue;
+						if (entries[i].is_ads)
 							continue;
 						if (entries[i].is_dir)
 							continue;
@@ -1286,7 +1300,8 @@ int main(int argc, char *argv[]) {
 							continue;
 						if (!entries[recno].name)
 							continue;
-
+						if (entries[recno].is_ads)
+							continue;
 						if (BuildPath(recno, path, sizeof(path))) {
 							
 							printf("%lu|%llu|%llu|%llu|%llu|%lu|%s|%s|%s\n",
