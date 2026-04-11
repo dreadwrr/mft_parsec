@@ -301,7 +301,6 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     uint8_t is_dir = 0;
     uint8_t is_ads = 0;
 
-	bool found = false;
 
     hrec = (FILE_RECORD_HEADER *)buf;
     if (hrec->first_attr_offset >= record_size)
@@ -374,11 +373,11 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                 // }
 
                 size_t name_len = (size_t)(len - 1);
-                if (name_len >= sizeof(best_name))
+                if (name_len >= sizeof(best_name)) {
                     attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
-
-                found = false; // marker so itself isnt appended to links
+                }
+                bool found = false; // marker so itself isnt appended to links
                 // get the first name prefer Windows or Windows&Dos
                 if (!got_best_name) {
                     got_name = 1;
@@ -501,20 +500,13 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
     uint32_t currentRecno = 0;
     int run_number = 0;
 
-    uint8_t header;
-    uint8_t lengthSize;
-    uint8_t offsetSize;
-    uint64_t runLength;
-    int64_t runOffset;
-    uint8_t i;
-
     while (*run != 0) {
-        header = *run++;
-        lengthSize = header & 0x0F;
-        offsetSize = (header >> 4) & 0x0F;
-        runLength = 0;
-        runOffset = 0;
-        
+        uint8_t header = *run++;
+        uint8_t lengthSize = header & 0x0F;
+        uint8_t offsetSize = (header >> 4) & 0x0F;
+        uint64_t runLength = 0;
+        int64_t runOffset = 0;
+        uint8_t i = 0;
         if (lengthSize == 0)
             break;
 
