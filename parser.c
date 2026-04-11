@@ -385,7 +385,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 					best_name_len = (uint16_t)name_len;
 
 					best_parent_frn = fn->parent_ref;		
-					size = fn->real_size;
+					// size = fn->real_size;
 
 					if (fn->name_type == 1 || fn->name_type == 3) {
 						got_best_name = 1;
@@ -406,13 +406,23 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 			// break;
         // }
         if (attr->type == 0x80) {
+
+			if (attr->non_resident == 0) {
+				RESIDENT_ATTR_HEADER *ndata = (RESIDENT_ATTR_HEADER *)attr;
+				size = ndata->value_length;
+			
+			} else {
+				NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
+				size = ndata->real_size;
+			}
             if (attr->name_length != 0) {
 				// skip ADS
 				// attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
 				// continue;
 				is_ads = 1;
 				break;
-            }
+            }			
+			
         }
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
     }
