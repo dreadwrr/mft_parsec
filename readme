@@ -1,3 +1,25 @@
 tentative name parsec or parse c
-
 Parse master file table written in C
+
+usage:
+optional drive (default C:)
+./parser.exe
+./parser.exe S:
+
+will output in format:
+recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path
+
+
+optional argument (one max)
+
+search for new files by time (UTC)
+--cutoff "2026-03-19 10:13:18" or 2026-03-19T10:13:18
+
+list mft record
+--target <recordno>
+
+same as with no optional argument but better format for parsing for Qt gui
+will output in format:
+recordnumber|frn|parent_frn|mtime|ctime|fileattrib|isdir|name|path
+--parse
+
