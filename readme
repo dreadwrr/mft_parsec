@@ -1,10 +1,10 @@
-picked tentative name parsec or parse c 04/11/2026
+tentative name parsec or parse c 04/11/2026
 
 Parse master file table written in C
 
-Initial release and will update shortly such as converting to system time which currently uses UTC (which is -7:00 where 
-I am). This is because the MFT uses UTC. The filesize of the parser is 170kb and it is fairly fast. I chose C as the job
-suites it perfectly suited for the task.
+Initial release and will update shortly such as changing input to system time and converting to UTC for --cutoff. It currently 
+uses UTC (which is -7:00 where I am). This is because the MFT uses UTC. Chose c as the job suites it perfectly. The filesize 
+of the parser is 170kb and the reason I made it is for my qt app that uses MFT features and needed a solution for that.
 
 usage:
 
