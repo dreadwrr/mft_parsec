@@ -1,4 +1,5 @@
-tentative name parsec or parse c 04/11/2026
+picked tentative name parsec or parse c 04/11/2026
+
 Parse master file table written in C
 
 Initial release and will update shortly such as converting to system time which currently uses UTC (which is -7:00 where 
@@ -25,8 +26,7 @@ search for new files by time (UTC)
 list mft record
 --target <recordno>
 
-same as with no optional argument but better format for parsing for Qt gui
-will output in format:
+same as with default usage but better format for parsing for Qt gui will output in format:
 recordnumber|frn|parent_frn|mtime|ctime|fileattrib|isdir|name|path
 --parse
 
