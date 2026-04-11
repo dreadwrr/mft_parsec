@@ -6,8 +6,10 @@ I am). This is because the MFT uses UTC. The filesize of the parser is 170kb and
 suites it perfectly suited for the task.
 
 usage:
+
 optional drive (default C:)
 ./parser.exe
+or
 ./parser.exe S:
 ./parser.exe C: --cutoff "2026-03-19 10:13:18"
 
