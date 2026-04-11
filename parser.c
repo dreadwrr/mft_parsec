@@ -318,7 +318,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 
     if (hrec->base_record != 0) {
         return;
-        frn = hrec->base_record;
+        // frn = hrec->base_record;  // not processing all hardlinks
     } else {
         frn = ((uint64_t)hrec->sequence_number << 48) | hrec->record_number;  // frn = ((uint64_t)hrec->sequence_number << 48) | recno;  // original. inferred
     }
@@ -365,6 +365,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     NULL
                 );
                 if (len == 0) {
+                    attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
                 }
                 // if (len == sizeof(name)) {
@@ -374,7 +375,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 
                 size_t name_len = (size_t)(len - 1);
                 if (name_len >= sizeof(best_name))
-                    // attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
+                    attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
 
                 found = false; // marker so itself isnt appended to links
@@ -408,7 +409,13 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             // break;
         // }
         if (attr->type == 0x80) {
-
+            if (attr->name_length != 0) {
+                // skip ADS
+                // attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
+                // continue;
+                is_ads = 1;
+                break;
+            }
             if (attr->non_resident == 0) {
                 RESIDENT_ATTR_HEADER *ndata = (RESIDENT_ATTR_HEADER *)attr;
                 size = ndata->value_length;
@@ -417,13 +424,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                 NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
                 size = ndata->real_size;
             }
-            if (attr->name_length != 0) {
-                // skip ADS
-                // attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
-                // continue;
-                is_ads = 1;
-                break;
-            }
+
 
         }
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
@@ -437,6 +438,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].record_number = hrec->record_number;
         entries[recno].sequence_number = hrec->sequence_number;
         entries[recno].record_offset = hrec->record_number * record_size;
+        // free(entries[recno].name);  // if already assign
         entries[recno].name = _strdup(best_name);
         if (!entries[recno].name) {
             entries[recno].in_use = 0;
