@@ -1227,7 +1227,7 @@ int main(int argc, char *argv[]) {
                         // if (dup_found) break;
                     // }
                     // printf("dup_found = %d\n", dup_found);
-                    
+                    ret = 0;
                 // search by time
                 } else if (cutoff_time > 0) {
 
@@ -1262,7 +1262,7 @@ int main(int argc, char *argv[]) {
                             // entries[i].name,
                             // path,
                             // entries[i].is_dir ? " [DIR]" : "");
-
+                        ret = 0;
                     }
                     
                 // retrieve single record
@@ -1347,6 +1347,7 @@ int main(int argc, char *argv[]) {
                             printf("========================\n");
                         }
                     }
+                    ret = 0;
 
                 } else if (qt_output) {
 
@@ -1354,7 +1355,7 @@ int main(int argc, char *argv[]) {
                     // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
 
                     // if (fwrite(&record_count, sizeof(record_count), 1, stdout) == 1) {
-
+                        // ret = 0;
                         // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
                             // FileEntry *e = &entries[recno];
                             // if (!e->in_use)
@@ -1387,6 +1388,7 @@ int main(int argc, char *argv[]) {
                             // memcpy(flat.name, e->name, flat.name_len);
 
                             // if (fwrite(&flat, sizeof(flat), 1, stdout) != 1) {
+                                // ret = 1;
                                 // break;
                             // }
                         // }
@@ -1413,6 +1415,7 @@ int main(int argc, char *argv[]) {
                                 path);
                         }
                     }
+                    ret = 0;
                 }
 
                 // cleanup
@@ -1436,7 +1439,7 @@ int main(int argc, char *argv[]) {
     }
     
     CloseHandle(h);
-    return 0;
+    return ret;
     
     cleanup:
         if (buf) free(buf);
