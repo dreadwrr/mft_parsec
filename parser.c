@@ -148,6 +148,7 @@ typedef struct {
     uint8_t has_ads;
     uint16_t hard_link_count;
     uint32_t file_attribs;
+    uint64_t usn;
     uint64_t creation_time;
     uint64_t modification_time;
     uint64_t mft_modification_time;
@@ -304,6 +305,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 
     uint64_t frn = 0;    
     uint32_t file_attribs = 0;
+    uint64_t usn = 0;
     uint64_t creation_time = 0;
     uint64_t modification_time = 0;
     uint64_t mft_modification_time = 0;
@@ -361,6 +363,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             modification_time = si->modification_time;
             mft_modification_time = si->mft_modification_time;
             access_time = si->access_time;
+            usn = si->usn;
 
         }
         // if (attr->type == 0x20) {
@@ -477,7 +480,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         // uint8_t is_reparse = 0;
         // is_reparse = (si->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 1 : 0;
         // entries[recno].is_reparse = is_reparse;
-        
+        entries[recno].usn = usn;
         entries[recno].creation_time = creation_time;
         entries[recno].modification_time = modification_time;
         entries[recno].mft_modification_time = mft_modification_time;
@@ -1149,6 +1152,7 @@ int main(int argc, char *argv[]) {
                 // uint8_t is_dir;
                 // uint16_t hard_link_count;
                 // uint32_t file_attribs;
+                // uint64_t usn;
                 // uint64_t creation_time;
                 // uint64_t modification_time;
                 // uint64_t mft_modification_time;
@@ -1332,6 +1336,7 @@ int main(int argc, char *argv[]) {
                                 FormatFileTime(times[t], out, sizeof(out));
                                 printf("%s=%s\n", labels[t], out);
                             }
+                            printf("Last Usn=%llu\n", (unsigned long long)entries[i].usn);
                             if (BuildPath(i, path, sizeof(path))) {
                                 printf("path=%s\n", path);
                             } else {
