@@ -2,7 +2,7 @@ tentative name parsec or parse c 04/11/2026
 
 Parse master file table written in C
 
-Initial release and will update if spotting anything from user if searching for new files with --cutoff
+Initial release and will update if spotting anything from use. if searching for new files with --cutoff
 it is system time. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and the
 reason I made it is for my qt app that uses MFT features and needed a solution for that.
 
