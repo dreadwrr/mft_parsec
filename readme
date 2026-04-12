@@ -2,10 +2,9 @@ tentative name parsec or parse c 04/11/2026
 
 Parse master file table written in C
 
-Initial release and will update shortly such as changing input to accept local system time and then 
-converting to UTC for --cutoff. It currently uses UTC (which is -7:00 where I am). This is because 
-the MFT uses UTC. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and
-the reason I made it is for my qt app that uses MFT features and needed a solution for that.
+Initial release and will update if spotting anything from user if searching for new files with --cutoff
+it is system time. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and the
+reason I made it is for my qt app that uses MFT features and needed a solution for that.
 
 usage:
 
@@ -21,7 +20,7 @@ recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path
 
 optional argument (one max)
 
-search for new files by time (UTC)
+search for new files by time (local system time)
 --cutoff "2026-03-19 10:13:18" or 2026-03-19T10:13:18
 
 list mft record
