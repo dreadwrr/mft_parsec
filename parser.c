@@ -970,11 +970,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    #ifdef _WIN32
-    if (qt_output) {
-        _setmode(_fileno(stdout), _O_BINARY);
-    }
-    #endif
+    // for binary output --parse
+    // #ifdef _WIN32
+    // if (qt_output) {
+        // _setmode(_fileno(stdout), _O_BINARY);
+    // }
+    // #endif
 
     // original prototype
     // const uint64_t mft_offset = 0xC0000000ULL; // used fsutil fsinfo ntfsinfo C: for starting cluster.
@@ -1110,7 +1111,10 @@ int main(int argc, char *argv[]) {
 
                 uint64_t mft_size = ndata->real_size;
                 uint64_t record_count = mft_size / record_size;
-                printf("[RECORD]  : %llu\n", (unsigned long long)record_count);
+                
+                // if (!qt_parser) {
+                    // printf("[RECORD]  : %llu\n", (unsigned long long)record_count);
+                // }
 
                 if (has_target) {
                     printf("$DATA is non-resident\n");
@@ -1333,30 +1337,12 @@ int main(int argc, char *argv[]) {
                             printf("========================\n");
                         }
                     }
-                    
-                    
-                    
-                    
-                // typedef struct {
-                    // uint64_t frn;
-                    // uint64_t parent_frn;
-                    // uint64_t size;
-                    // uint64_t creation_time;
-                    // uint64_t modification_time;
-                    // uint64_t mft_modification_time;
-                    // uint64_t access_time;
-                    // uint32_t record_number;
-                    // uint32_t file_attribs;
-                    // uint16_t sequence_number;
-                    // uint16_t hard_link_count;
-                    // uint16_t name_len;
-                    // uint8_t is_dir;
-                    // uint8_t is_ads;
-                    // char name[MAX_NAME];
-                // } FileEntryFlat;                    
 
                 } else if (qt_output) {
-                    fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));
+                    
+                    // binary output for qt app
+                    // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));
+                    // qt_output = true;
                     
                     // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
                         // FileEntry *e = &entries[recno];
@@ -1396,28 +1382,28 @@ int main(int argc, char *argv[]) {
                         // fwrite(&flat, sizeof(flat), 1, stdout);
                     // }
                     
-                    
-                    // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
-                        // if (!entries[recno].in_use)
-                            // continue;
-                        // if (!entries[recno].name)
-                            // continue;
-                        // if (entries[recno].is_ads)
-                            // continue;
-                        // if (BuildPath(recno, path, sizeof(path))) {
+                    // write different format than default 
+                    for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+                        if (!entries[recno].in_use)
+                            continue;
+                        if (!entries[recno].name)
+                            continue;
+                        if (entries[recno].is_ads)
+                            continue;
+                        if (BuildPath(recno, path, sizeof(path))) {
 
-                            // printf("%lu|%llu|%llu|%llu|%llu|%lu|%s|%s|%s\n",
-                                // (unsigned long)recno,
-                                // (unsigned long long)entries[recno].frn,
-                                // (unsigned long long)entries[recno].parent_frn,
-                                // (unsigned long long)entries[recno].modification_time,
-                                // (unsigned long long)entries[recno].creation_time,
-                                // entries[recno].file_attribs,
-                                // entries[recno].is_dir ? "[DIR]" : "[FILE]",
-                                // entries[recno].name,
-                                // path);
-                        // }
-                    // }
+                            printf("%lu|%llu|%llu|%llu|%llu|%lu|%s|%s|%s\n",
+                                (unsigned long)recno,
+                                (unsigned long long)entries[recno].frn,
+                                (unsigned long long)entries[recno].parent_frn,
+                                (unsigned long long)entries[recno].modification_time,
+                                (unsigned long long)entries[recno].creation_time,
+                                entries[recno].file_attribs,
+                                entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                                entries[recno].name,
+                                path);
+                        }
+                    }
                 }
 
                 // cleanup
