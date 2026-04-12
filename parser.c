@@ -179,6 +179,7 @@ uint32_t link_capacity = 0;
 FileEntry *entries = NULL;
 uint32_t entry_capacity = 0;
 
+static const uint64_t FRN_RECORD_MASK = 0x0000FFFFFFFFFFFFULL;
 
 // prototypes
 uint64_t EpochToNtfs(time_t epoch);
@@ -424,7 +425,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                 if ((!found && !is_dir) && (fn->name_type != 2) &&
                     hrec->base_record == 0 &&
                     hrec->hard_link_count > 1) {
-                    AppendLink((uint32_t)(frn & 0x0000FFFFFFFFFFFFULL), frn, fn->parent_ref, name);  // use reference no as first arg
+                    AppendLink((uint32_t)(frn & FRN_RECORD_MASK), frn, fn->parent_ref, name);  // use reference no as first arg
                 }
             }
         }
@@ -602,7 +603,7 @@ int BuildLinkPath(uint32_t link_index, char *out, size_t outSize) {
     parent_frn = links[link_index].parent_frn;
 
     while (1) {
-        recno = (uint32_t)(parent_frn & 0x0000FFFFFFFFFFFFULL);
+        recno = (uint32_t)(parent_frn & FRN_RECORD_MASK);
 
         if (recno >= entry_capacity)
             return 0;
@@ -625,7 +626,7 @@ int BuildLinkPath(uint32_t link_index, char *out, size_t outSize) {
             break;
 
         uint64_t next_parent = entries[recno].parent_frn;
-        uint32_t parent_recno = (uint32_t)(next_parent & 0x0000FFFFFFFFFFFFULL);
+        uint32_t parent_recno = (uint32_t)(next_parent & FRN_RECORD_MASK);
         uint16_t parent_seq = (uint16_t)(next_parent >> 48);
 
         if (parent_recno == recno)
@@ -723,7 +724,7 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     // files use parent directory, dirs use themselves
     if (!entries[orig_recno].is_dir) {
         uint64_t parent_frn = entries[orig_recno].parent_frn;
-        uint32_t parent_recno = (uint32_t)(parent_frn & 0x0000FFFFFFFFFFFFULL);
+        uint32_t parent_recno = (uint32_t)(parent_frn & FRN_RECORD_MASK);
         uint16_t parent_seq = (uint16_t)(parent_frn >> 48);
 
         if (parent_recno >= entry_capacity)
@@ -757,7 +758,7 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
             break;
 
         uint64_t parent_frn = entries[recno].parent_frn;
-        uint32_t parent_recno = (uint32_t)(parent_frn & 0x0000FFFFFFFFFFFFULL);
+        uint32_t parent_recno = (uint32_t)(parent_frn & FRN_RECORD_MASK);
         uint16_t parent_seq = (uint16_t)(parent_frn >> 48);
 
         if (parent_recno == recno)
@@ -1293,7 +1294,7 @@ int main(int argc, char *argv[]) {
                             printf("rec=%u\n", entries[i].record_number);
                             printf("seq=%u\n", entries[i].sequence_number);
 
-                            uint32_t parent_recno = (uint32_t)(entries[i].parent_frn & 0x0000FFFFFFFFFFFFULL);
+                            uint32_t parent_recno = (uint32_t)(entries[i].parent_frn & FRN_RECORD_MASK);
                             uint16_t parent_seq = (uint16_t)(entries[i].parent_frn >> 48);
                             printf("parent_rec=%u\n", parent_recno);
                             printf("parent_seq=%u\n", parent_seq);
@@ -1348,47 +1349,49 @@ int main(int argc, char *argv[]) {
                     }
 
                 } else if (qt_output) {
-                    
+
                     // binary output for qt app
-                    // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));
-                    // qt_output = true;
-                    
-                    // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
-                        // FileEntry *e = &entries[recno];
-                        // if (!e->in_use)
-                            // continue;
-                        // if (!e->name || e->name_len == 0)
-                            // continue;
-                        // FileEntryFlat flat;
+                    // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
 
-                        // memset(&flat, 0, sizeof(flat));
+                    // if (fwrite(&record_count, sizeof(record_count), 1, stdout) == 1) {
 
-                        // flat.frn = e->frn;
-                        // flat.parent_frn = e->parent_frn;
+                        // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+                            // FileEntry *e = &entries[recno];
+                            // if (!e->in_use)
+                                // continue;
+                            // if (!e->name || e->name_len == 0)
+                                // continue;
+                            // FileEntryFlat flat;
 
-                        // flat.size = e->size;
-                        // flat.creation_time = e->creation_time;
-                        // flat.modification_time = e->modification_time;
-                        // flat.mft_modification_time = e->mft_modification_time;
-                        // flat.access_time = e->access_time;
+                            // memset(&flat, 0, sizeof(flat));
 
-                        // flat.record_number = e->record_number;
-                        // flat.file_attribs = e->file_attribs;
+                            // flat.frn = e->frn;
+                            // flat.parent_frn = e->parent_frn;
 
-                        // flat.sequence_number = e->sequence_number;
-                        // flat.hard_link_count = e->hard_link_count;
-                        // flat.name_len = e->name_len;
+                            // flat.size = e->size;
+                            // flat.creation_time = e->creation_time;
+                            // flat.modification_time = e->modification_time;
+                            // flat.mft_modification_time = e->mft_modification_time;
+                            // flat.access_time = e->access_time;
 
-                        // flat.is_dir = e->is_dir;
-                        // flat.has_ads = e->has_ads;
+                            // flat.record_number = e->record_number;
+                            // flat.file_attribs = e->file_attribs;
 
-                        // copy name into fixed buffer
-                        // memcpy(flat.name, e->name, flat.name_len);
+                            // flat.sequence_number = e->sequence_number;
+                            // flat.hard_link_count = e->hard_link_count;
+                            // flat.name_len = e->name_len;
 
-                        // write it
-                        // fwrite(&flat, sizeof(flat), 1, stdout);
+                            // flat.is_dir = e->is_dir;
+                            // flat.has_ads = e->has_ads;
+
+                            // memcpy(flat.name, e->name, flat.name_len);
+
+                            // if (fwrite(&flat, sizeof(flat), 1, stdout) != 1) {
+                                // break;
+                            // }
+                        // }
                     // }
-                    
+
                     // write different format than default 
                     for (uint32_t recno = 0; recno < entry_capacity; recno++) {
                         if (!entries[recno].in_use)
