@@ -8,6 +8,12 @@
 #include <time.h>
 #include <windows.h>
 
+#define MAX_NAME 1024
+#define CHUNK_SIZE (64ULL * 1024ULL * 1024ULL)  //  read mft in 64MB chunks
+#define TICKS_PER_SECOND 10000000ULL  // 100ns tick
+#define TICKS_BTWN_1601_1970 116444736000000000ULL
+// #define OUTBUF_SIZE (1024 * 1024) // 1MB
+#define OUTBUF_SIZE (4 << 20)
 #pragma pack(push, 1)
 typedef struct {
     char     signature[4];
@@ -139,7 +145,7 @@ typedef struct {
     uint8_t dir_path_ready;
     uint8_t in_use;
     uint8_t is_dir;
-    uint8_t is_ads;
+    uint8_t has_ads;
     uint16_t hard_link_count;
     uint32_t file_attribs;
     uint64_t creation_time;
@@ -162,8 +168,8 @@ typedef struct {
     uint16_t hard_link_count;
     uint16_t name_len;
     uint8_t is_dir;
-    uint8_t is_ads;
-    char name[1024];
+    uint8_t has_ads;
+    char name[MAX_NAME];
 } FileEntryFlat;
 
 LinkEntry *links = NULL;
@@ -171,11 +177,7 @@ uint32_t link_count = 0;
 uint32_t link_capacity = 0;
 FileEntry *entries = NULL;
 uint32_t entry_capacity = 0;
-#define CHUNK_SIZE (64ULL * 1024ULL * 1024ULL)  //  read mft in 64MB chunks
-#define TICKS_PER_SECOND 10000000ULL  // 100ns tick
-#define TICKS_BTWN_1601_1970 116444736000000000ULL
-// #define OUTBUF_SIZE (1024 * 1024) // 1MB
-#define OUTBUF_SIZE (4 << 20)
+
 
 // prototypes
 uint64_t EpochToNtfs(time_t epoch);
@@ -319,7 +321,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     uint64_t size = 0;
 
     uint8_t is_dir = 0;
-    uint8_t is_ads = 0;
+    uint8_t has_ads = 0;
 
 
     hrec = (FILE_RECORD_HEADER *)buf;
@@ -430,10 +432,9 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         if (attr->type == 0x80) {
             if (attr->name_length != 0) {
                 // skip ADS
-                // attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
-                // continue;
-                is_ads = 1;
-                break;
+                has_ads = 1;
+                attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
+                continue;
             }
             if (attr->non_resident == 0) {
                 RESIDENT_ATTR_HEADER *ndata = (RESIDENT_ATTR_HEADER *)attr;
@@ -468,7 +469,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].size = size;
         entries[recno].in_use = 1;
         entries[recno].is_dir = is_dir;
-        entries[recno].is_ads = is_ads;
+        entries[recno].has_ads = has_ads;
         entries[recno].hard_link_count = hrec->hard_link_count;
         // entries[recno].links_appended = p;
         entries[recno].file_attribs = file_attribs;
@@ -1113,7 +1114,7 @@ int main(int argc, char *argv[]) {
                 uint64_t record_count = mft_size / record_size;
                 
                 // if (!qt_parser) {
-                    // printf("[RECORD]  : %llu\n", (unsigned long long)record_count);
+                    // printf("[RECORD]  : %llu\n", (unsigned long long)record_count);  // for progress indicating
                 // }
 
                 if (has_target) {
@@ -1128,7 +1129,7 @@ int main(int argc, char *argv[]) {
 
                 ParseRuns(h, run, bytesPerCluster, bootsector.bytesPerSector, record_size, has_target);
 
-                // output area
+                // parsing complete output area
                 
                 char path[8192];
 
@@ -1176,8 +1177,6 @@ int main(int argc, char *argv[]) {
                         if (!entries[recno].in_use)
                             continue;
                         if (!entries[recno].name)
-                            continue;
-                        if (entries[recno].is_ads)
                             continue;
 
                         if (BuildPath(recno, path, sizeof(path))) {
@@ -1231,8 +1230,6 @@ int main(int argc, char *argv[]) {
                         if (!entries[i].in_use)
                             continue;
                         if (!entries[i].name)
-                            continue;
-                        if (entries[i].is_ads)
                             continue;
                         if (entries[i].is_dir)
                             continue;
@@ -1291,6 +1288,12 @@ int main(int argc, char *argv[]) {
                             
                             printf("rec=%u\n", entries[i].record_number);
                             printf("seq=%u\n", entries[i].sequence_number);
+
+                            uint32_t parent_recno = (uint32_t)(entries[i].parent_frn & 0x0000FFFFFFFFFFFFULL);
+                            uint16_t parent_seq = (uint16_t)(entries[i].parent_frn >> 48);
+                            printf("parent_rec=%u\n", parent_recno);
+                            printf("parent_seq=%u\n", parent_seq);
+
                             printf("offset=%llu hex=0x%llx\n", 
                                 (unsigned long long)entries[i].record_offset,
                                 (unsigned long long)entries[i].record_offset);
@@ -1299,6 +1302,7 @@ int main(int argc, char *argv[]) {
                             printf("size=%llu\n", entries[i].size);
                             printf("in_use=%u\n", entries[i].in_use);
                             printf("is_dir=%u\n", entries[i].is_dir);
+                            printf("has_ads=%u\n", entries[i].has_ads);
 
                             printf("hard_links=%u\n", entries[i].hard_link_count);
 
@@ -1320,7 +1324,7 @@ int main(int argc, char *argv[]) {
                             const char *labels[4] = {
                                 "ctime",
                                 "mtime",
-                                "mft",
+                                "mft modified",
                                 "atime"
                             };
 
@@ -1348,8 +1352,6 @@ int main(int argc, char *argv[]) {
                         // FileEntry *e = &entries[recno];
                         // if (!e->in_use)
                             // continue;
-                        // if (e->is_ads)
-                            // continue;
                         // if (!e->name || e->name_len == 0)
                             // continue;
                         // FileEntryFlat flat;
@@ -1373,7 +1375,7 @@ int main(int argc, char *argv[]) {
                         // flat.name_len = e->name_len;
 
                         // flat.is_dir = e->is_dir;
-                        // flat.is_ads = e->is_ads;
+                        // flat.has_ads = e->has_ads;
 
                         // copy name into fixed buffer
                         // memcpy(flat.name, e->name, flat.name_len);
@@ -1388,8 +1390,7 @@ int main(int argc, char *argv[]) {
                             continue;
                         if (!entries[recno].name)
                             continue;
-                        if (entries[recno].is_ads)
-                            continue;
+
                         if (BuildPath(recno, path, sizeof(path))) {
 
                             printf("%lu|%llu|%llu|%llu|%llu|%lu|%s|%s|%s\n",
@@ -1448,7 +1449,7 @@ uint64_t ParseDatetimeToNtfs(const char *input) {
     if (sscanf(input, "%d-%d-%d %d:%d:%d",
                &year, &month, &day,
                &hour, &min, &sec) != 6) {
-        return 0; // invalid
+        return 0;
     }
 
     struct tm t = {0};
@@ -1468,14 +1469,14 @@ uint64_t ParseDatetimeToNtfs(const char *input) {
 
     return EpochToNtfs(epoch);
 }
-    
+
 time_t NtfsToEpoch(uint64_t ntfs) {
-    return (time_t)((ntfs - 116444736000000000ULL) / 10000000ULL);
+    return (time_t)((ntfs - TICKS_BTWN_1601_1970) / TICKS_PER_SECOND);
 }
 
 void FormatFileTime(uint64_t ft, char *out, size_t outSize) {
     // FILETIME → Unix epoch (seconds + remainder)
-    const uint64_t EPOCH_DIFF = 116444736000000000ULL;
+    const uint64_t EPOCH_DIFF = TICKS_BTWN_1601_1970;
 
     if (ft < EPOCH_DIFF) {
         snprintf(out, outSize, "0");
@@ -1484,8 +1485,8 @@ void FormatFileTime(uint64_t ft, char *out, size_t outSize) {
 
     uint64_t unix_100ns = ft - EPOCH_DIFF;
 
-    time_t seconds = (time_t)(unix_100ns / 10000000ULL);
-    uint64_t remainder = unix_100ns % 10000000ULL; // 100ns units
+    time_t seconds = (time_t)(unix_100ns / TICKS_PER_SECOND);
+    uint64_t remainder = unix_100ns % TICKS_PER_SECOND; // 100ns units
 
     struct tm tm;
     gmtime_s(&tm, &seconds);
