@@ -173,6 +173,7 @@ typedef struct {
     char name[MAX_NAME];
 } FileEntryFlat;
 
+uint32_t flagone = 0;
 LinkEntry *links = NULL;
 uint32_t link_count = 0;
 uint32_t link_capacity = 0;
@@ -394,7 +395,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     continue;
                 }
                 // if (len == sizeof(name)) {
-                    //// detect truncation
+                    // detect truncation
                     // continue;
                 // }
 
@@ -915,8 +916,8 @@ int main(int argc, char *argv[]) {
 
     snprintf(volume, sizeof(volume), "\\\\.\\%s", drive);
     // const char *volume = "\\\\.\\C:";  // original moved to drive arg
-    
-    
+
+
     uint64_t cutoff_time = 0;
 
     uint32_t target_recno = 0;
@@ -1264,10 +1265,10 @@ int main(int argc, char *argv[]) {
                             // entries[i].is_dir ? " [DIR]" : "");
                         ret = 0;
                     }
-                    
+
                 // retrieve single record
                 } else if (has_target) {
-
+                    
                     for (uint32_t i = 0; i < entry_capacity; i++) {
                         if (!entries[i].in_use)
                             continue;
@@ -1353,15 +1354,16 @@ int main(int argc, char *argv[]) {
 
                     // binary output for qt app
                     // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
-
+                    // 
+                    // ret = 0;
                     // if (fwrite(&record_count, sizeof(record_count), 1, stdout) == 1) {
-                        // ret = 0;
                         // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
                             // FileEntry *e = &entries[recno];
                             // if (!e->in_use)
                                 // continue;
                             // if (!e->name || e->name_len == 0)
                                 // continue;
+
                             // FileEntryFlat flat;
 
                             // memset(&flat, 0, sizeof(flat));
@@ -1435,12 +1437,12 @@ int main(int argc, char *argv[]) {
         }
 
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
-        
+
     }
-    
+
     CloseHandle(h);
     return ret;
-    
+
     cleanup:
         if (buf) free(buf);
         if (h != INVALID_HANDLE_VALUE) {
