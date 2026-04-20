@@ -2,178 +2,16 @@
 #include <fcntl.h>
 #include <io.h>
 #include <wchar.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h>
+#include "parser.h"
 
-#define MAX_NAME 1024
-#define CHUNK_SIZE (64ULL * 1024ULL * 1024ULL)  //  read mft in 64MB chunks
 #define TICKS_PER_SECOND 10000000ULL  // 100ns tick
 #define TICKS_BTWN_1601_1970 116444736000000000ULL
 // #define OUTBUF_SIZE (1024 * 1024) // 1MB
 #define OUTBUF_SIZE (4 << 20)
-#pragma pack(push, 1)
-typedef struct {
-    char     signature[4];
-    uint16_t usa_offset;
-    uint16_t usa_count;
-    uint64_t lsn;
-    uint16_t sequence_number;
-    uint16_t hard_link_count;
-    uint16_t first_attr_offset;
-    uint16_t flags;
-    uint32_t used_size;
-    uint32_t allocated_size;
-    uint64_t base_record;
-    uint16_t next_attr_id;
-    uint16_t align;
-    uint32_t record_number;
-} FILE_RECORD_HEADER;
 
-typedef struct {
-    uint32_t type;           // attribute type
-    uint32_t length;         // total attribute length
-    uint8_t  non_resident;   // 0 = resident, 1 = non-resident
-    uint8_t  name_length;
-    uint16_t name_offset;
-    uint16_t flags;
-    uint16_t attr_id;
-} ATTR_HEADER;
-
-typedef struct {
-    ATTR_HEADER common;
-    uint32_t value_length;
-    uint16_t value_offset;
-    uint8_t  indexed_flag;
-    uint8_t  padding;
-} RESIDENT_ATTR_HEADER;
-
-typedef struct {
-    ATTR_HEADER common;
-    uint64_t lowest_vcn;     // first cluster
-    uint64_t highest_vcn;    // last cluster
-    uint16_t run_offset;     // offset to data runs
-    uint8_t compression_unit;
-    uint8_t reserved[5];
-    uint64_t alloc_size;     // attribute
-    uint64_t real_size;      // attribute
-    uint64_t initialized_size;    // stream data
-    uint64_t compressed_size;
-} NONRES_ATTR_HEADER;
-
-typedef struct {
-    RESIDENT_ATTR_HEADER resident;
-    uint64_t creation_time;
-    uint64_t modification_time;
-    uint64_t mft_modification_time;
-    uint64_t access_time;
-    uint32_t file_attributes;
-    uint32_t max_versions;
-    uint32_t version_number;
-    uint32_t class_id;
-    uint32_t owner_id;
-    uint32_t security_id;
-    uint64_t quota_charged;
-    uint64_t usn;
-} STANDARD_INFORMATION_ATTR;
-
-typedef struct {
-    RESIDENT_ATTR_HEADER resident;
-    uint64_t parent_ref;
-    uint64_t creation_time;
-    uint64_t modification_time;
-    uint64_t mft_modification_time;
-    uint64_t access_time;
-    uint64_t allocated_size;
-    uint64_t real_size;
-    uint32_t flags;
-    uint32_t reparse;
-    uint8_t  name_length;
-    uint8_t  name_type;
-    wchar_t  name[1];
-} FILE_NAME_ATTR;
-
-typedef struct {
-    uint8_t     jump[3]; 
-    char        name[8];
-    uint16_t    bytesPerSector;
-    uint8_t     sectorsPerCluster;
-    uint16_t    reservedSectors;
-    uint8_t     unused0[3];
-    uint16_t    unused1;
-    uint8_t     media;
-    uint16_t    unused2;
-    uint16_t    sectorsPerTrack;
-    uint16_t    headsPerCylinder;
-    uint32_t    hiddenSectors;
-    uint32_t    unused3;
-    uint32_t    unused4;
-    uint64_t    totalSectors;
-    uint64_t    mftStart;
-    uint64_t    mftMirrorStart;
-    int8_t      clustersPerFileRecord;
-    uint8_t     cfr_padding[3];
-    int8_t      clustersPerIndexBlock;
-    uint8_t     cib_padding[3];
-    uint64_t    serialNumber;
-    uint32_t    checksum;
-    uint8_t     bootloader[426];
-    uint16_t    bootSignature;
-} BootSector;
-#pragma pack(pop)
-
-typedef struct {
-    uint32_t recno;
-    uint64_t frn;
-    uint64_t parent_frn;
-    char *name;
-    uint16_t name_len;
-} LinkEntry;
-
-typedef struct {
-    uint64_t frn;
-    uint64_t parent_frn;
-    uint32_t record_number;
-    uint16_t sequence_number;
-    uint64_t record_offset;
-    char *name;
-    uint16_t name_len;
-    uint64_t size;
-    char *dir_path_cache;
-    uint8_t dir_path_ready;
-    uint8_t in_use;
-    uint8_t is_dir;
-    uint8_t has_ads;
-    uint16_t hard_link_count;
-    uint32_t file_attribs;
-    uint64_t usn;
-    uint64_t creation_time;
-    uint64_t modification_time;
-    uint64_t mft_modification_time;
-    uint64_t access_time;
-} FileEntry;
-
-typedef struct {
-    uint64_t frn;
-    uint64_t parent_frn;
-    uint64_t size;
-    uint64_t creation_time;
-    uint64_t modification_time;
-    uint64_t mft_modification_time;
-    uint64_t access_time;
-    uint32_t record_number;
-    uint32_t file_attribs;
-    uint16_t sequence_number;
-    uint16_t hard_link_count;
-    uint16_t name_len;
-    uint8_t is_dir;
-    uint8_t has_ads;
-    char name[MAX_NAME];
-} FileEntryFlat;
-
-uint32_t flagone = 0;
 LinkEntry *links = NULL;
 uint32_t link_count = 0;
 uint32_t link_capacity = 0;
@@ -324,6 +162,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     char name[1024] = {0};
     uint64_t size = 0;
 
+    uint8_t in_use = 0;
     uint8_t is_dir = 0;
     uint8_t has_ads = 0;
 
@@ -336,9 +175,11 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         return;
     if (memcmp(hrec->signature, "FILE", 4) != 0)  // sanity check is there a header
         return;
-    // not in use
+
     if (!(hrec->flags & 0x0001))
         return;
+    in_use = 1;
+
     is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 
     if (hrec->base_record != 0) {
@@ -394,6 +235,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
                 }
+
                 // if (len == sizeof(name)) {
                     // detect truncation
                     // continue;
@@ -878,6 +720,64 @@ int BuildPath(uint32_t recno, char *out, size_t outSize) {
     return 1;
 }
 
+uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, int has_target) {
+    // read mft header
+    ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
+
+    while ((unsigned char *)attr < buf + record_size) {
+        if (attr->type == 0xFFFFFFFF) {
+            break;
+        }
+
+        if (attr->length == 0) {
+            break;
+        }
+
+        // if (has_target) {
+            // printf("Attr type: 0x%08x len=%u nonresident=%u\n",
+                // attr->type, attr->length, attr->non_resident);
+        // }
+
+        if (attr->type == 0x80) {
+            if (!attr->non_resident) {
+                printf("$DATA is resident\n");
+                return 0;
+            } else {
+
+                NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
+
+                uint64_t mft_size = ndata->real_size;
+                uint64_t record_count = mft_size / record_size;
+                
+                // if (!qt_parser) {
+                    // printf("[RECORD]  : %llu\n", (unsigned long long)record_count);  // for progress indicating
+                // }
+
+                if (has_target) {
+                    printf("$DATA is non-resident\n");
+                    printf("run offset   : %u\n", ndata->run_offset);
+                    printf("alloc size   : %llu\n", (unsigned long long)ndata->alloc_size);
+                    printf("real size    : %llu\n", (unsigned long long)mft_size);
+                    printf("init size    : %llu\n", (unsigned long long)ndata->initialized_size);
+                }
+
+                unsigned char *run = (unsigned char *)attr + ndata->run_offset;
+
+                ParseRuns(h, run, bytesPerCluster, bytesPerSector, record_size, has_target);
+
+                // parsing complete output area
+                return record_count;
+
+            }
+            break;
+        }
+
+        attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
+    }
+    
+    return 0;
+}
+
 /**
 with no argument output all valid file entries from the MFT
 
@@ -1089,367 +989,310 @@ int main(int argc, char *argv[]) {
     } // } else {
         // printf("Looks like a FILE record\n");  // success
     // }
-        
-    // read mft header
-    ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
 
-    while ((unsigned char *)attr < buf + record_size) {
-        if (attr->type == 0xFFFFFFFF) {
-            break;
-        }
+    uint64_t record_count = ParseAttributes(h, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector, has_target);
+    if (record_count) {
+        char path[8192];
 
-        if (attr->length == 0) {
-            break;
-        }
+        // Notes:
+        // FileEntry struct available variables to print
+        // uint64_t frn;
+        // uint64_t parent_frn;
+        // uint32_t record_number;
+        // uint16_t sequence_number;
+        // uint64_t record_offset;
+        // char *name;
+        // uint16_t name_len;
+        // uint64_t size;
+        // char *dir_path_cache; 
+        // uint8_t dir_path_ready;
+        // uint8_t in_use;
+        // uint8_t is_dir;
+        // uint16_t hard_link_count;
+        // uint32_t file_attribs;
+        // uint64_t usn;
+        // uint64_t creation_time;
+        // uint64_t modification_time;
+        // uint64_t mft_modification_time;
+        // uint64_t access_time;
+        // int links_appended;
 
-        // if (has_target) {
-            // printf("Attr type: 0x%08x len=%u nonresident=%u\n",
-                // attr->type, attr->length, attr->non_resident);
-        // }
+        // python fsearchmft format search by mft Qt gui
+        // mtime = line[0]
+        // mtime_us = line[1]
+        // c_time = line[2]
+        // atime = line[3]
+        // size = line[4]
+        // last_modified = line[5]
+        // mode_attribs = line[6]
+        // hardlink = line[7]
+        // inode = line[8]
+        // cam = line[9]
+        // file_path = line[10]
 
-        if (attr->type == 0x80) {
-            if (!attr->non_resident) {
-                printf("$DATA is resident\n");
-                goto cleanup;
-            } else {
+        // print mft entries for run
 
-                NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
+        // recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path 
+        if (cutoff_time == 0 && !has_target && !qt_output) {
 
-                uint64_t mft_size = ndata->real_size;
-                uint64_t record_count = mft_size / record_size;
-                
-                // if (!qt_parser) {
-                    // printf("[RECORD]  : %llu\n", (unsigned long long)record_count);  // for progress indicating
-                // }
+            for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+                if (!entries[recno].in_use)
+                    continue;
+                if (!entries[recno].name)
+                    continue;
 
-                if (has_target) {
-                    printf("$DATA is non-resident\n");
-                    printf("run offset   : %u\n", ndata->run_offset);
-                    printf("alloc size   : %llu\n", (unsigned long long)ndata->alloc_size);
-                    printf("real size    : %llu\n", (unsigned long long)mft_size);
-                    printf("init size    : %llu\n", (unsigned long long)ndata->initialized_size);
-                }
-
-                unsigned char *run = (unsigned char *)attr + ndata->run_offset;
-
-                ParseRuns(h, run, bytesPerCluster, bootsector.bytesPerSector, record_size, has_target);
-
-                // parsing complete output area
-                
-                char path[8192];
-
-                // Notes:
-                // FileEntry struct available variables to print
-                // uint64_t frn;
-                // uint64_t parent_frn;
-                // uint32_t record_number;
-                // uint16_t sequence_number;
-                // uint64_t record_offset;
-                // char *name;
-                // uint16_t name_len;
-                // uint64_t size;
-                // char *dir_path_cache; 
-                // uint8_t dir_path_ready;
-                // uint8_t in_use;
-                // uint8_t is_dir;
-                // uint16_t hard_link_count;
-                // uint32_t file_attribs;
-                // uint64_t usn;
-                // uint64_t creation_time;
-                // uint64_t modification_time;
-                // uint64_t mft_modification_time;
-                // uint64_t access_time;
-                // int links_appended;
-
-                // python fsearchmft format search by mft Qt gui
-                // mtime = line[0]
-                // mtime_us = line[1]
-                // c_time = line[2]
-                // atime = line[3]
-                // size = line[4]
-                // last_modified = line[5]
-                // mode_attribs = line[6]
-                // hardlink = line[7]
-                // inode = line[8]
-                // cam = line[9]
-                // file_path = line[10]
-
-                // print mft entries for run
-
-                // recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path 
-                if (cutoff_time == 0 && !has_target && !qt_output) {
-
-                    for (uint32_t recno = 0; recno < entry_capacity; recno++) {
-                        if (!entries[recno].in_use)
-                            continue;
-                        if (!entries[recno].name)
-                            continue;
-
-                        if (BuildPath(recno, path, sizeof(path))) {
-                            
-                            printf("%lu %llu %llu %llu %llu %lu %s|%s|%s\n",
-                                (unsigned long)recno,
-                                (unsigned long long)entries[recno].frn,
-                                (unsigned long long)entries[recno].parent_frn,
-                                (unsigned long long)entries[recno].modification_time,
-                                (unsigned long long)entries[recno].creation_time,
-                                entries[recno].file_attribs,
-                                entries[recno].is_dir ? "[DIR]" : "[FILE]",
-                                entries[recno].name,
-                                path);
-                        }
-                    }
-
-                    // print all hardlinks
-                    // recordnumber frn parent_frn ishlink|name|path 
-                    // for (uint32_t i = 0; i < link_count; i++) {
-                        // if (BuildLinkPath(i, path, sizeof(path))) {
-                            // printf("%lu %llu %llu %s|%s|%s\n",
-                                // (unsigned long long)links[i].recno,
-                                // (unsigned long long)links[i].frn,
-                                // (unsigned long long)links[i].parent_frn,
-                                // "[HLINK]"
-                                // links[i].name ? links[i].name : "null",
-                                // path);
-                        // }
-                    // }
+                if (BuildPath(recno, path, sizeof(path))) {
                     
-                    // check for duplicates in hard_links
-                    // bool dup_found = false;
-                    // for (uint32_t i = 0; i < link_count; i++) {
-                        // for (uint32_t j = i + 1; j < link_count; j++) {
-                            // if (links[i].parent_frn == links[j].parent_frn &&
-                                // strcmp(links[i].name, links[j].name) == 0)
-                            // {
-                                // dup_found = true;
-                                // break;
-                            // }
-                        // }
-                        // if (dup_found) break;
-                    // }
-                    // printf("dup_found = %d\n", dup_found);
-                    ret = 0;
-                // search by time
-                } else if (cutoff_time > 0) {
-
-                    for (uint32_t i = 0; i < entry_capacity; i++) {
-                        if (!entries[i].in_use)
-                            continue;
-                        if (!entries[i].name)
-                            continue;
-                        if (entries[i].is_dir)
-                            continue;
-
-                        uint64_t mod_time = entries[i].modification_time;
-                        uint64_t creation_time = entries[i].creation_time;
-                        // verify cutoff_time matches 
-                        // printf("cutoff=%llu mod_time=%llu creation_time=%llu\n",
-                            // (unsigned long long)cutoff_time,
-                            // (unsigned long long)mod_time,
-                            // (unsigned long long)creation_time);
-                        if (!(mod_time >= cutoff_time || creation_time >= cutoff_time))
-                            continue;
-                        if (!(BuildPath(i, path, sizeof(path)))) {
-                            continue;
-                        }
-                        
-                        printf("C:%s\n", path);
-
-                        //
-                        // printf("rec=%lu frn=%llu parent=%llu name=%s path=%s%s\n",
-                            // (unsigned long)i,
-                            // (unsigned long long)entries[i].frn,
-                            // (unsigned long long)entries[i].parent_frn,
-                            // entries[i].name,
-                            // path,
-                            // entries[i].is_dir ? " [DIR]" : "");
-                        ret = 0;
-                    }
-
-                // retrieve single record
-                } else if (has_target) {
-                    
-                    for (uint32_t i = 0; i < entry_capacity; i++) {
-                        if (!entries[i].in_use)
-                            continue;
-                        if (!entries[i].name)
-                            continue;
-
-                        if (i == target_recno) {
-                            uint32_t attrs = entries[i].file_attribs;
-                            const char *ro   = (attrs & FILE_ATTRIBUTE_READONLY) ? " [READONLY]" : "";
-                            const char *hid  = (attrs & FILE_ATTRIBUTE_HIDDEN) ? " [HIDDEN]" : "";
-                            const char *sys  = (attrs & FILE_ATTRIBUTE_SYSTEM) ? " [SYSTEM]" : "";
-                            const char *dir  = (attrs & FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
-                            const char *arc  = (attrs & FILE_ATTRIBUTE_ARCHIVE) ? " [ARCHIVE]" : "";
-                            const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
-                            
-                            printf("=== DEBUG RECORD %u ===\n", i);
-                            printf("flags=0x%08X%s%s%s%s%s%s\n",
-                                attrs, ro, hid, sys, dir, arc, rep);
-                            // printf("file_attributes=0x%08X\n", entries[i].file_attribs);
-
-                            printf("frn=%llu\n", (unsigned long long)entries[i].frn);
-                            printf("parent_frn=%llu\n", (unsigned long long)entries[i].parent_frn);
-                            
-                            printf("rec=%u\n", entries[i].record_number);
-                            printf("seq=%u\n", entries[i].sequence_number);
-
-                            uint32_t parent_recno = (uint32_t)(entries[i].parent_frn & FRN_RECORD_MASK);
-                            uint16_t parent_seq = (uint16_t)(entries[i].parent_frn >> 48);
-                            printf("parent_rec=%u\n", parent_recno);
-                            printf("parent_seq=%u\n", parent_seq);
-
-                            printf("offset=%llu hex=0x%llx\n", 
-                                (unsigned long long)entries[i].record_offset,
-                                (unsigned long long)entries[i].record_offset);
-                            
-                            printf("name=%s\n", entries[i].name ? entries[i].name : "(null)");
-                            printf("size=%llu\n", entries[i].size);
-                            printf("in_use=%u\n", entries[i].in_use);
-                            printf("is_dir=%u\n", entries[i].is_dir);
-                            printf("has_ads=%u\n", entries[i].has_ads);
-
-                            printf("hard_links=%u\n", entries[i].hard_link_count);
-
-                            // original
-                            // printf("creation=%llu\n", (unsigned long long)entries[i].creation_time);
-                            // printf("modification=%llu\n", (unsigned long long)entries[i].modification_time);
-                            // printf("mft_modification=%llu\n", (unsigned long long)entries[i].mft_modification_time);
-                            // printf("access=%llu\n", (unsigned long long)entries[i].access_time);
-
-                            char out[64];
-
-                            uint64_t times[4] = {
-                                entries[i].creation_time,
-                                entries[i].modification_time,
-                                entries[i].mft_modification_time,
-                                entries[i].access_time
-                            };
-
-                            const char *labels[4] = {
-                                "ctime",
-                                "mtime",
-                                "mft modified",
-                                "atime"
-                            };
-
-                            for (int t = 0; t < 4; t++) {
-                                FormatFileTime(times[t], out, sizeof(out));
-                                printf("%s=%s\n", labels[t], out);
-                            }
-                            printf("Last Usn=%llu\n", (unsigned long long)entries[i].usn);
-                            if (BuildPath(i, path, sizeof(path))) {
-                                printf("path=%s\n", path);
-                            } else {
-                                printf("path=(failed)\n");
-                            }
-
-                            printf("========================\n");
-                        }
-                    }
-                    ret = 0;
-
-                } else if (qt_output) {
-
-                    // binary output for qt app
-                    // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
-                    // 
-                    // ret = 0;
-                    // if (fwrite(&record_count, sizeof(record_count), 1, stdout) == 1) {
-                        // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
-                            // FileEntry *e = &entries[recno];
-                            // if (!e->in_use)
-                                // continue;
-                            // if (!e->name || e->name_len == 0)
-                                // continue;
-
-                            // FileEntryFlat flat;
-
-                            // memset(&flat, 0, sizeof(flat));
-
-                            // flat.frn = e->frn;
-                            // flat.parent_frn = e->parent_frn;
-
-                            // flat.size = e->size;
-                            // flat.creation_time = e->creation_time;
-                            // flat.modification_time = e->modification_time;
-                            // flat.mft_modification_time = e->mft_modification_time;
-                            // flat.access_time = e->access_time;
-
-                            // flat.record_number = e->record_number;
-                            // flat.file_attribs = e->file_attribs;
-
-                            // flat.sequence_number = e->sequence_number;
-                            // flat.hard_link_count = e->hard_link_count;
-                            // flat.name_len = e->name_len;
-
-                            // flat.is_dir = e->is_dir;
-                            // flat.has_ads = e->has_ads;
-
-                            // memcpy(flat.name, e->name, flat.name_len);
-
-                            // if (fwrite(&flat, sizeof(flat), 1, stdout) != 1) {
-                                // ret = 1;
-                                // break;
-                            // }
-                        // }
-                    // }
-
-                    // write different format than default 
-                    for (uint32_t recno = 0; recno < entry_capacity; recno++) {
-                        if (!entries[recno].in_use)
-                            continue;
-                        if (!entries[recno].name)
-                            continue;
-
-                        if (BuildPath(recno, path, sizeof(path))) {
-
-                            printf("%lu|%llu|%llu|%llu|%llu|%lu|%s|%s|%s\n",
-                                (unsigned long)recno,
-                                (unsigned long long)entries[recno].frn,
-                                (unsigned long long)entries[recno].parent_frn,
-                                (unsigned long long)entries[recno].modification_time,
-                                (unsigned long long)entries[recno].creation_time,
-                                entries[recno].file_attribs,
-                                entries[recno].is_dir ? "[DIR]" : "[FILE]",
-                                entries[recno].name,
-                                path);
-                        }
-                    }
-                    ret = 0;
+                    printf("%lu %llu %llu %llu %llu %lu %s|%s|%s\n",
+                        (unsigned long)recno,
+                        (unsigned long long)entries[recno].frn,
+                        (unsigned long long)entries[recno].parent_frn,
+                        (unsigned long long)entries[recno].modification_time,
+                        (unsigned long long)entries[recno].creation_time,
+                        entries[recno].file_attribs,
+                        entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                        entries[recno].name,
+                        path);
                 }
-
-                // cleanup
-
-                for (uint32_t i = 0; i < entry_capacity; i++) {
-                    free(entries[i].dir_path_cache);
-                    free(entries[i].name);
-                }
-                free(entries);
-                for (uint32_t i = 0; i < link_count; i++) {
-                    free(links[i].name);
-                }
-                free(links);
-                free(buf);
+                ret = 0;
             }
-            break;
+
+            // print all hardlinks
+            // recordnumber frn parent_frn ishlink|name|path 
+            // for (uint32_t i = 0; i < link_count; i++) {
+                // if (BuildLinkPath(i, path, sizeof(path))) {
+                    // printf("%lu %llu %llu %s|%s|%s\n",
+                        // (unsigned long long)links[i].recno,
+                        // (unsigned long long)links[i].frn,
+                        // (unsigned long long)links[i].parent_frn,
+                        // "[HLINK]"
+                        // links[i].name ? links[i].name : "null",
+                        // path);
+                // }
+            // }
+            
+            // check for duplicates in hard_links
+            // bool dup_found = false;
+            // for (uint32_t i = 0; i < link_count; i++) {
+                // for (uint32_t j = i + 1; j < link_count; j++) {
+                    // if (links[i].parent_frn == links[j].parent_frn &&
+                        // strcmp(links[i].name, links[j].name) == 0)
+                    // {
+                        // dup_found = true;
+                        // break;
+                    // }
+                // }
+                // if (dup_found) break;
+            // }
+            // printf("dup_found = %d\n", dup_found);
+            
+        // search by time
+        } else if (cutoff_time > 0) {
+
+            for (uint32_t i = 0; i < entry_capacity; i++) {
+                if (!entries[i].in_use)
+                    continue;
+                if (!entries[i].name)
+                    continue;
+                if (entries[i].is_dir)
+                    continue;
+
+                uint64_t mod_time = entries[i].modification_time;
+                uint64_t creation_time = entries[i].creation_time;
+                // verify cutoff_time matches 
+                // printf("cutoff=%llu mod_time=%llu creation_time=%llu\n",
+                    // (unsigned long long)cutoff_time,
+                    // (unsigned long long)mod_time,
+                    // (unsigned long long)creation_time);
+                if (!(mod_time >= cutoff_time || creation_time >= cutoff_time))
+                    continue;
+                if (!(BuildPath(i, path, sizeof(path)))) {
+                    continue;
+                }
+                
+                printf("C:%s\n", path);
+
+                //
+                // printf("rec=%lu frn=%llu parent=%llu name=%s path=%s%s\n",
+                    // (unsigned long)i,
+                    // (unsigned long long)entries[i].frn,
+                    // (unsigned long long)entries[i].parent_frn,
+                    // entries[i].name,
+                    // path,
+                    // entries[i].is_dir ? " [DIR]" : "");
+                ret = 0;
+            }
+
+        // retrieve single record
+        } else if (has_target) {
+            
+            for (uint32_t i = 0; i < entry_capacity; i++) {
+                if (!entries[i].in_use)
+                    continue;
+                if (!entries[i].name)
+                    continue;
+
+                if (i == target_recno) {
+                    uint32_t attrs = entries[i].file_attribs;
+                    const char *ro   = (attrs & FILE_ATTRIBUTE_READONLY) ? " [READONLY]" : "";
+                    const char *hid  = (attrs & FILE_ATTRIBUTE_HIDDEN) ? " [HIDDEN]" : "";
+                    const char *sys  = (attrs & FILE_ATTRIBUTE_SYSTEM) ? " [SYSTEM]" : "";
+                    const char *dir  = (attrs & FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
+                    const char *arc  = (attrs & FILE_ATTRIBUTE_ARCHIVE) ? " [ARCHIVE]" : "";
+                    const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
+                    
+                    printf("=== DEBUG RECORD %u ===\n", i);
+                    printf("flags=0x%08X%s%s%s%s%s%s\n",
+                        attrs, ro, hid, sys, dir, arc, rep);
+                    // printf("file_attributes=0x%08X\n", entries[i].file_attribs);
+
+                    printf("frn=%llu\n", (unsigned long long)entries[i].frn);
+                    printf("parent_frn=%llu\n", (unsigned long long)entries[i].parent_frn);
+                    
+                    printf("rec=%u\n", entries[i].record_number);
+                    printf("seq=%u\n", entries[i].sequence_number);
+
+                    uint32_t parent_recno = (uint32_t)(entries[i].parent_frn & FRN_RECORD_MASK);
+                    uint16_t parent_seq = (uint16_t)(entries[i].parent_frn >> 48);
+                    printf("parent_rec=%u\n", parent_recno);
+                    printf("parent_seq=%u\n", parent_seq);
+
+                    printf("offset=%llu hex=0x%llx\n", 
+                        (unsigned long long)entries[i].record_offset,
+                        (unsigned long long)entries[i].record_offset);
+                    
+                    printf("name=%s\n", entries[i].name ? entries[i].name : "(null)");
+                    printf("size=%llu\n", entries[i].size);
+                    printf("in_use=%u\n", entries[i].in_use);
+                    printf("is_dir=%u\n", entries[i].is_dir);
+                    printf("has_ads=%u\n", entries[i].has_ads);
+
+                    printf("hard_links=%u\n", entries[i].hard_link_count);
+
+                    // original
+                    // printf("creation=%llu\n", (unsigned long long)entries[i].creation_time);
+                    // printf("modification=%llu\n", (unsigned long long)entries[i].modification_time);
+                    // printf("mft_modification=%llu\n", (unsigned long long)entries[i].mft_modification_time);
+                    // printf("access=%llu\n", (unsigned long long)entries[i].access_time);
+
+                    char out[64];
+
+                    uint64_t times[4] = {
+                        entries[i].creation_time,
+                        entries[i].modification_time,
+                        entries[i].mft_modification_time,
+                        entries[i].access_time
+                    };
+
+                    const char *labels[4] = {
+                        "ctime",
+                        "mtime",
+                        "mft modified",
+                        "atime"
+                    };
+
+                    for (int t = 0; t < 4; t++) {
+                        FormatFileTime(times[t], out, sizeof(out));
+                        printf("%s=%s\n", labels[t], out);
+                    }
+                    printf("Last Usn=%llu\n", (unsigned long long)entries[i].usn);
+                    if (BuildPath(i, path, sizeof(path))) {
+                        printf("path=%s\n", path);
+                    } else {
+                        printf("path=(failed)\n");
+                    }
+
+                    printf("========================\n");
+                    ret = 0;
+                }   
+            }
+        } else if (qt_output) {
+
+            // binary output for qt app
+            // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
+
+            // ret = 0;
+            // if (fwrite(&record_count, sizeof(record_count), 1, stdout) == 1) {
+                // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+                    // FileEntry *e = &entries[recno];
+                    ////if (!e->in_use)
+                        ////continue;
+                    // if (!e->name || e->name_len == 0)
+                        // continue;
+
+                    // FileEntryFlat flat;
+
+                    // memset(&flat, 0, sizeof(flat));
+
+                    // flat.frn = e->frn;
+                    // flat.parent_frn = e->parent_frn;
+
+                    // flat.size = e->size;
+                    // flat.creation_time = e->creation_time;
+                    // flat.modification_time = e->modification_time;
+                    // flat.mft_modification_time = e->mft_modification_time;
+                    // flat.access_time = e->access_time;
+
+                    // flat.record_number = e->record_number;
+                    // flat.file_attribs = e->file_attribs;
+
+                    // flat.sequence_number = e->sequence_number;
+                    // flat.hard_link_count = e->hard_link_count;
+                    // flat.name_len = e->name_len;
+
+                    // flat.in_use = e->in_use;
+                    // flat.is_dir = e->is_dir;
+                    // flat.has_ads = e->has_ads;
+
+                    // memcpy(flat.name, e->name, flat.name_len);
+
+                    // if (fwrite(&flat, sizeof(flat), 1, stdout) != 1) {
+                        // ret = 1;
+                        // break;
+                    // }
+                // }
+            // }
+
+            // write different format than default 
+            for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+                if (!entries[recno].in_use)
+                    continue;
+                if (!entries[recno].name)
+                    continue;
+
+                if (BuildPath(recno, path, sizeof(path))) {
+
+                    printf("%lu|%llu|%llu|%llu|%llu|%lu|%s|%s|%s\n",
+                        (unsigned long)recno,
+                        (unsigned long long)entries[recno].frn,
+                        (unsigned long long)entries[recno].parent_frn,
+                        (unsigned long long)entries[recno].modification_time,
+                        (unsigned long long)entries[recno].creation_time,
+                        entries[recno].file_attribs,
+                        entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                        entries[recno].name,
+                        path);
+                }
+                ret = 0;
+            }
         }
-
-        attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
-
     }
+
+    // cleanup
+    free_processed();
+    free(buf);
 
     CloseHandle(h);
     return ret;
 
     cleanup:
+
         if (buf) free(buf);
         if (h != INVALID_HANDLE_VALUE) {
             CloseHandle(h);
         }
 
-        return ret;
+        return 0;
 }
 
 uint64_t EpochToNtfs(time_t epoch) {
@@ -1516,4 +1359,18 @@ void FormatFileTime(uint64_t ft, char *out, size_t outSize) {
         tm.tm_min,
         tm.tm_sec,
         (unsigned long long)nanoseconds);
+}
+
+void free_processed(void) {
+    // cleanup
+
+    for (uint32_t i = 0; i < entry_capacity; i++) {
+        free(entries[i].dir_path_cache);
+        free(entries[i].name);
+    }
+    free(entries);
+    for (uint32_t i = 0; i < link_count; i++) {
+        free(links[i].name);
+    }
+    free(links);
 }
