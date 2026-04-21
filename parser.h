@@ -172,4 +172,4 @@ extern FileEntry *entries;
 extern uint32_t entry_capacity;
 
 uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, int has_target);
-void free_processed(void);
+void free_processed(unsigned char *buff);

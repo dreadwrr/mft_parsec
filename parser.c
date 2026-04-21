@@ -153,7 +153,6 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     
     uint8_t got_name = 0;
     uint8_t got_best_name = 0;
-    // int p = 0;  // links appended
 
     char best_name[1024] = {0};
     uint16_t best_name_len = 0;
@@ -305,6 +304,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].record_number = hrec->record_number;
         entries[recno].sequence_number = hrec->sequence_number;
         entries[recno].record_offset = hrec->record_number * record_size;
+
         // free(entries[recno].name);  // if already assign
         entries[recno].name = _strdup(best_name);
         if (!entries[recno].name) {
@@ -313,12 +313,12 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         }
         entries[recno].name_len = best_name_len;
         // entries[recno].name_len = strlen(best_name);  // 04/09/2026 commented out
+
         entries[recno].size = size;
         entries[recno].in_use = 1;
         entries[recno].is_dir = is_dir;
         entries[recno].has_ads = has_ads;
         entries[recno].hard_link_count = hrec->hard_link_count;
-        // entries[recno].links_appended = p;
         entries[recno].file_attribs = file_attribs;
 
         // uint8_t is_reparse = 0;
@@ -333,10 +333,12 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 }
 
 uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
+    
+    uint32_t processed = 0;
     uint64_t runBytes = clusters * bytesPerCluster;
     uint64_t offset = lcn * bytesPerCluster;
+    
     unsigned char *buffer = malloc((size_t)CHUNK_SIZE);
-    uint32_t processed = 0;
     if (!buffer) {
         printf("malloc failed\n");
         exit(1);
@@ -778,8 +780,22 @@ uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FIL
     return 0;
 }
 
+void Help(char* argv[]) {
+    printf("MFT parsec \n\n\
+    with no argument output all file entries from the MFT \n\n\
+    or can take 1 argument: \n\n\
+    search for files by cutoff\n\
+    --cutoff \"2026-03-19 10:13:18\" or 2026-03-19T10:13:18\n\n\
+    diagnostics list mft record\n\
+    --target <record number>\n\n\
+    output for Qt gui which is same as no argument different format\n\
+    --parse\n");
+    exit(0);
+}
+
 /**
-with no argument output all valid file entries from the MFT
+04/21/2026
+with no argument output all valid file entries from the MFT 
 
 
 or can take 1 argument
@@ -787,7 +803,7 @@ or can take 1 argument
 search for files by cutoff
 --cutoff "2026-03-19 10:13:18" or 2026-03-19T10:13:18
 
-diagnostics\list mft record
+diagnostics list mft record
 --target <record number>
 
 output for Qt gui which is same as no argument different format 
@@ -795,13 +811,16 @@ output for Qt gui which is same as no argument different format
 */
 int main(int argc, char *argv[]) {
 
-    int ret = 1;  // assume error
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "help") == 0)) {
+        Help(argv);
+    }
+
     setvbuf(stdout, NULL, _IOFBF, 4 << 20);  // enable buffering
-    int arg_index = 1;
-
+    
     char *drive = "C:";  // default
-
     char drive_buf[3];
+    int ret = 1;  // assume error
+    int arg_index = 1;
 
     if (argc >= 2 && strlen(argv[1]) >= 2 && argv[1][1] == ':') {
         drive_buf[0] = argv[1][0];
@@ -814,15 +833,11 @@ int main(int argc, char *argv[]) {
 
     char volume[16];  // set target drive ie C: S: E:
 
-    snprintf(volume, sizeof(volume), "\\\\.\\%s", drive);
-    // const char *volume = "\\\\.\\C:";  // original moved to drive arg
-
-
+    snprintf(volume, sizeof(volume), "\\\\.\\%s", drive);  // const char *volume = "\\\\.\\C:";  // original design moved to drive arg
+    
     uint64_t cutoff_time = 0;
-
     uint32_t target_recno = 0;
     bool has_target = false;
-
     bool qt_output = false;
 
     // read any drive and or one optional argument
@@ -876,26 +891,21 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // for binary output --parse
+    /* uncomment enable this for binary output --parse */
     // #ifdef _WIN32
     // if (qt_output) {
         // _setmode(_fileno(stdout), _O_BINARY);
     // }
     // #endif
 
-    // original prototype
+    // original design
     // const uint64_t mft_offset = 0xC0000000ULL; // used fsutil fsinfo ntfsinfo C: for starting cluster.
     // const DWORD record_size = 1024;  // assumed same as 512 for sector
+    // unsigned char buf[1024];
 
     HANDLE h;
-    LARGE_INTEGER pos;
-    // unsigned char buf[1024];
     unsigned char *buf = NULL;
-    // unsigned char *buf = malloc(record_size);
-    // if (!buf) {
-        // printf("malloc failed\n");
-        // goto cleanup;
-    // }
+    LARGE_INTEGER pos;
     DWORD bytes_read = 0;
 
     FILE_RECORD_HEADER *hrec;
@@ -1004,10 +1014,11 @@ int main(int argc, char *argv[]) {
         // char *name;
         // uint16_t name_len;
         // uint64_t size;
-        // char *dir_path_cache; 
+        // char *dir_path_cache;
         // uint8_t dir_path_ready;
         // uint8_t in_use;
         // uint8_t is_dir;
+        // uint8_t has_ads;
         // uint16_t hard_link_count;
         // uint32_t file_attribs;
         // uint64_t usn;
@@ -1015,7 +1026,6 @@ int main(int argc, char *argv[]) {
         // uint64_t modification_time;
         // uint64_t mft_modification_time;
         // uint64_t access_time;
-        // int links_appended;
 
         // python fsearchmft format search by mft Qt gui
         // mtime = line[0]
@@ -1030,9 +1040,9 @@ int main(int argc, char *argv[]) {
         // cam = line[9]
         // file_path = line[10]
 
-        // print mft entries for run
+        /* print mft entries for run 
+           recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path */
 
-        // recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path 
         if (cutoff_time == 0 && !has_target && !qt_output) {
 
             for (uint32_t recno = 0; recno < entry_capacity; recno++) {
@@ -1054,7 +1064,7 @@ int main(int argc, char *argv[]) {
                         entries[recno].name,
                         path);
                 }
-                ret = 0;
+
             }
 
             // print all hardlinks
@@ -1085,8 +1095,9 @@ int main(int argc, char *argv[]) {
                 // if (dup_found) break;
             // }
             // printf("dup_found = %d\n", dup_found);
-            
-        // search by time
+            ret = 0;
+
+        /* search by time */
         } else if (cutoff_time > 0) {
 
             for (uint32_t i = 0; i < entry_capacity; i++) {
@@ -1099,11 +1110,13 @@ int main(int argc, char *argv[]) {
 
                 uint64_t mod_time = entries[i].modification_time;
                 uint64_t creation_time = entries[i].creation_time;
+
                 // verify cutoff_time matches 
                 // printf("cutoff=%llu mod_time=%llu creation_time=%llu\n",
                     // (unsigned long long)cutoff_time,
                     // (unsigned long long)mod_time,
                     // (unsigned long long)creation_time);
+ 
                 if (!(mod_time >= cutoff_time || creation_time >= cutoff_time))
                     continue;
                 if (!(BuildPath(i, path, sizeof(path)))) {
@@ -1120,10 +1133,11 @@ int main(int argc, char *argv[]) {
                     // entries[i].name,
                     // path,
                     // entries[i].is_dir ? " [DIR]" : "");
-                ret = 0;
+                
             }
+            ret = 0;
 
-        // retrieve single record
+        /* retrieve single record */
         } else if (has_target) {
             
             for (uint32_t i = 0; i < entry_capacity; i++) {
@@ -1169,7 +1183,7 @@ int main(int argc, char *argv[]) {
 
                     printf("hard_links=%u\n", entries[i].hard_link_count);
 
-                    // original
+                    // original design
                     // printf("creation=%llu\n", (unsigned long long)entries[i].creation_time);
                     // printf("modification=%llu\n", (unsigned long long)entries[i].modification_time);
                     // printf("mft_modification=%llu\n", (unsigned long long)entries[i].mft_modification_time);
@@ -1206,9 +1220,11 @@ int main(int argc, char *argv[]) {
                     ret = 0;
                 }   
             }
+
+        /* binary output for qt app */
         } else if (qt_output) {
 
-            // binary output for qt app
+            
             // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
 
             // ret = 0;
@@ -1253,10 +1269,9 @@ int main(int argc, char *argv[]) {
                 // }
             // }
 
-            // write different format than default 
+            /* write different format than default */
             for (uint32_t recno = 0; recno < entry_capacity; recno++) {
-                if (!entries[recno].in_use)
-                    continue;
+
                 if (!entries[recno].name)
                     continue;
 
@@ -1273,26 +1288,25 @@ int main(int argc, char *argv[]) {
                         entries[recno].name,
                         path);
                 }
-                ret = 0;
             }
+            ret = 0;
         }
     }
 
     // cleanup
-    free_processed();
-    free(buf);
+    free_processed(buf);
 
     CloseHandle(h);
     return ret;
 
     cleanup:
+        free_processed(buf);
 
-        if (buf) free(buf);
         if (h != INVALID_HANDLE_VALUE) {
             CloseHandle(h);
         }
 
-        return 0;
+        return 1;
 }
 
 uint64_t EpochToNtfs(time_t epoch) {
@@ -1361,16 +1375,26 @@ void FormatFileTime(uint64_t ft, char *out, size_t outSize) {
         (unsigned long long)nanoseconds);
 }
 
-void free_processed(void) {
-    // cleanup
+void free_processed(unsigned char *buff) {
 
-    for (uint32_t i = 0; i < entry_capacity; i++) {
-        free(entries[i].dir_path_cache);
-        free(entries[i].name);
+    if (entries) {
+        for (uint32_t i = 0; i < entry_capacity; i++) {
+            free(entries[i].dir_path_cache);
+            free(entries[i].name);
+        }
+        free(entries);
+        entries = NULL;
     }
-    free(entries);
-    for (uint32_t i = 0; i < link_count; i++) {
-        free(links[i].name);
+    
+    if (links) {
+        for (uint32_t i = 0; i < link_count; i++) {
+            free(links[i].name);
+        }
+        free(links);
+        links = NULL;
     }
-    free(links);
+
+    free(buff);
+    entry_capacity = 0;
+    link_count = 0;
 }
