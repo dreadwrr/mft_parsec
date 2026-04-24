@@ -172,4 +172,5 @@ extern FileEntry *entries;
 extern uint32_t entry_capacity;
 
 uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, int has_target);
+int BuildLinkPath(uint32_t link_index, char *out, size_t outSize);
 void free_processed(unsigned char *buff);

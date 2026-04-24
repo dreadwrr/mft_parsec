@@ -139,7 +139,11 @@ void AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *n
     link_count++;
 }
 
+// uint8_t is_reparse = 0;
+// is_reparse = (si->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 1 : 0;
+// entries[recno].is_reparse = is_reparse;
 void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, uint32_t record_size) {
+
     FILE_RECORD_HEADER *hrec;
     ATTR_HEADER *attr;
 
@@ -150,18 +154,21 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     uint64_t modification_time = 0;
     uint64_t mft_modification_time = 0;
     uint64_t access_time = 0;
-    
+
+    char names[16][1024] = {0};
+    uint64_t parent_frns[16] = {0};
+    int name_count = 0;
+
     uint8_t got_name = 0;
-    uint8_t got_best_name = 0;
 
     char best_name[1024] = {0};
     uint16_t best_name_len = 0;
+
     uint64_t best_parent_frn = 0;
 
     char name[1024] = {0};
     uint64_t size = 0;
 
-    uint8_t in_use = 0;
     uint8_t is_dir = 0;
     uint8_t has_ads = 0;
 
@@ -170,23 +177,24 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     if (hrec->first_attr_offset >= record_size)
         return;
 
-    if (!apply_usa(buf, bytesPerSector)) // apply fixups
-        return;
     if (memcmp(hrec->signature, "FILE", 4) != 0)  // sanity check is there a header
+        return;
+
+    if (!apply_usa(buf, bytesPerSector)) // apply fixups
         return;
 
     if (!(hrec->flags & 0x0001))
         return;
-    in_use = 1;
 
     is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 
     if (hrec->base_record != 0) {
         return;
-        // frn = hrec->base_record;  // not processing all hardlinks
+        // frn = hrec->base_record;
     } else {
         frn = ((uint64_t)hrec->sequence_number << 48) | hrec->record_number;  // frn = ((uint64_t)hrec->sequence_number << 48) | recno;  // original. inferred
     }
+
     attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
 
     while (1) {
@@ -206,15 +214,15 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             mft_modification_time = si->mft_modification_time;
             access_time = si->access_time;
             usn = si->usn;
-
         }
-        // if (attr->type == 0x20) {
-            // are other $FILE_NAME attributes in extension records?
-        // }
+
+
         if (attr->type == 0x30 && attr->non_resident == 0) {
             FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)attr;
 
-            if (fn->name_length < 512) {
+            // prefer Windows or Windows&Dos
+            if (fn->name_type != 2 && fn->name_length < 512 && name_count < 16) {
+
                 wchar_t wname[512];
 
                 wmemcpy(wname, fn->name, fn->name_length);
@@ -234,7 +242,6 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
                 }
-
                 // if (len == sizeof(name)) {
                     // detect truncation
                     // continue;
@@ -245,36 +252,23 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
                 }
-                bool found = false; // marker so itself isnt appended to links
-                // get the first name prefer Windows or Windows&Dos
-                if (!got_best_name) {
-                    got_name = 1;
 
-                    // strcpy(best_name, name);  // 04/09/2026 commented out
+                
+
+                if (!got_name) {
+                    // Base record, first name — store as canonical
                     memcpy(best_name, name, name_len + 1);
                     best_name_len = (uint16_t)name_len;
-
                     best_parent_frn = fn->parent_ref;
-                    // size = fn->real_size;
-
-                    if (fn->name_type == 1 || fn->name_type == 3) {
-                        got_best_name = 1;
-                        found = true;
-                    }
-                }
-
-
-                if ((!found && !is_dir) && (fn->name_type != 2) &&
-                    hrec->base_record == 0 &&
-                    hrec->hard_link_count > 1) {
-                    AppendLink((uint32_t)(frn & FRN_RECORD_MASK), frn, fn->parent_ref, name);  // use reference no as first arg
+                    got_name = 1;
+                } else {
+                    memcpy(names[name_count], name, name_len + 1);
+                    parent_frns[name_count] = fn->parent_ref;
+                    name_count++;
                 }
             }
         }
-        // done parsing $FILE_NAME
-        // if (attr->type == 0x40) {
-            // break;
-        // }
+
         if (attr->type == 0x80) {
             if (attr->name_length != 0) {
                 // skip ADS
@@ -299,20 +293,20 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     if (hrec->base_record == 0 && got_name) {
 
         EnsureEntryCapacity(recno);
+
         entries[recno].frn = frn;
         entries[recno].parent_frn = best_parent_frn;
         entries[recno].record_number = hrec->record_number;
         entries[recno].sequence_number = hrec->sequence_number;
         entries[recno].record_offset = hrec->record_number * record_size;
 
-        // free(entries[recno].name);  // if already assign
         entries[recno].name = _strdup(best_name);
         if (!entries[recno].name) {
             entries[recno].in_use = 0;
             return;
         }
+
         entries[recno].name_len = best_name_len;
-        // entries[recno].name_len = strlen(best_name);  // 04/09/2026 commented out
 
         entries[recno].size = size;
         entries[recno].in_use = 1;
@@ -321,14 +315,20 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].hard_link_count = hrec->hard_link_count;
         entries[recno].file_attribs = file_attribs;
 
-        // uint8_t is_reparse = 0;
-        // is_reparse = (si->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 1 : 0;
-        // entries[recno].is_reparse = is_reparse;
         entries[recno].usn = usn;
         entries[recno].creation_time = creation_time;
         entries[recno].modification_time = modification_time;
         entries[recno].mft_modification_time = mft_modification_time;
         entries[recno].access_time = access_time;
+
+        for (int i = 0; i < name_count; i++) {
+            AppendLink(
+                (uint32_t)(frn & FRN_RECORD_MASK),
+                frn,
+                parent_frns[i],
+                names[i]
+            );
+        }
     }
 }
 
@@ -429,7 +429,7 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
 int BuildLinkPath(uint32_t link_index, char *out, size_t outSize) {
     uint32_t chain[1024];
     size_t depth = 0;
-    size_t pos = 0;
+    // size_t pos = 0;
     uint64_t parent_frn;
     uint32_t recno;
 
@@ -439,96 +439,22 @@ int BuildLinkPath(uint32_t link_index, char *out, size_t outSize) {
     if (link_index >= link_count)
         return 0;
 
-
-    out[0] = '\0';
-
     if (!links[link_index].name)
         return 0;
 
     parent_frn = links[link_index].parent_frn;
-
-    while (1) {
-        recno = (uint32_t)(parent_frn & FRN_RECORD_MASK);
-
-        if (recno >= entry_capacity)
-            return 0;
-
-        if (!entries[recno].in_use)
-            return 0;
-
-        if (depth >= 1024)
-            return 0;
-
-        for (size_t j = 0; j < depth; j++) {
-            if (chain[j] == recno) {
-                return 0;
-            }
-        }
-
-        chain[depth++] = recno;
-
-        if (recno == 5)
-            break;
-
-        uint64_t next_parent = entries[recno].parent_frn;
-        uint32_t parent_recno = (uint32_t)(next_parent & FRN_RECORD_MASK);
-        uint16_t parent_seq = (uint16_t)(next_parent >> 48);
-
-        if (parent_recno == recno)
-            return 0;
-
-        if (parent_recno >= entry_capacity)
-            return 0;
-
-        if (!entries[parent_recno].in_use)
-            return 0;
-
-        uint16_t actual_seq = (uint16_t)(entries[parent_recno].frn >> 48);
-        if (actual_seq != parent_seq)
-            return 0;
-
-        parent_frn = next_parent;
-    }
-
-    for (size_t i = depth; i > 0; i--) {
-        uint32_t idx = chain[i - 1];
-        const char *name = entries[idx].name;
-        size_t len;
-
-        if (!name || name[0] == '\0')
-            continue;
-
-        if (strcmp(name, ".") == 0)
-            continue;
-
-        if (pos + 1 >= outSize)
-            return 0;
-
-        out[pos++] = '\\';
-        out[pos] = '\0';
-
-        len = entries[idx].name_len;
-        // len = strlen(name);
-        if (len > 255)
-            return 0;
-
-        if (pos + len >= outSize)
-            return 0;
-
-        memcpy(out + pos, name, len);
-        pos += len;
-        out[pos] = '\0';
-    }
-
-    if (pos + 1 >= outSize)
+    uint32_t parent_recno = (uint32_t)(parent_frn & FRN_RECORD_MASK);
+    if (!BuildDirPath(parent_recno, out, outSize))
         return 0;
 
-    out[pos++] = '\\';
-    out[pos] = '\0';
-
+    // append link name
+    size_t pos = strlen(out);
     const char *leaf = links[link_index].name;
     size_t len = links[link_index].name_len;
-    // size_t len = strlen(leaf);
+
+    if (pos + 1 >= outSize) return 0;
+    out[pos++] = '\\';
+    out[pos] = '\0';
 
     if (len > 255)
         return 0;
@@ -556,7 +482,6 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
 
     if (orig_recno >= entry_capacity)
         return 0;
-
     if (!entries[orig_recno].in_use)
         return 0;
 
@@ -634,7 +559,7 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
         out[pos] = '\0';
 
         len = entries[chain[i - 1]].name_len;
-        // len = strlen(name);
+
         if (pos + len >= outSize)
             return 0;
 
@@ -711,7 +636,7 @@ int BuildPath(uint32_t recno, char *out, size_t outSize) {
     }
 
     len = entries[recno].name_len;
-    // len = strlen(name);
+
     if (pos + len >= outSize)
         return 0;
 
@@ -1064,23 +989,24 @@ int main(int argc, char *argv[]) {
                         entries[recno].name,
                         path);
                 }
-
             }
 
             // print all hardlinks
-            // recordnumber frn parent_frn ishlink|name|path 
+            //recordnumber frn parent_frn ishlink|name|path
+
             // for (uint32_t i = 0; i < link_count; i++) {
                 // if (BuildLinkPath(i, path, sizeof(path))) {
-                    // printf("%lu %llu %llu %s|%s|%s\n",
+                    // printf("%llu %llu %llu %s|%s|%s\n",
                         // (unsigned long long)links[i].recno,
                         // (unsigned long long)links[i].frn,
                         // (unsigned long long)links[i].parent_frn,
-                        // "[HLINK]"
+                        // "[HLINK]",
                         // links[i].name ? links[i].name : "null",
                         // path);
                 // }
             // }
-            
+
+
             // check for duplicates in hard_links
             // bool dup_found = false;
             // for (uint32_t i = 0; i < link_count; i++) {
@@ -1224,15 +1150,14 @@ int main(int argc, char *argv[]) {
         /* binary output for qt app */
         } else if (qt_output) {
 
-            
             // fprintf(stderr, "sizeof(FileEntryFlat)=%zu\n", sizeof(FileEntryFlat));  // verify size
 
             // ret = 0;
             // if (fwrite(&record_count, sizeof(record_count), 1, stdout) == 1) {
                 // for (uint32_t recno = 0; recno < entry_capacity; recno++) {
                     // FileEntry *e = &entries[recno];
-                    ////if (!e->in_use)
-                        ////continue;
+                    //// if (!e->in_use)
+                        //// continue;
                     // if (!e->name || e->name_len == 0)
                         // continue;
 
