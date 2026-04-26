@@ -1,4 +1,4 @@
-tentative name parsec or parse c 04/24/2026
+tentative name parsec or parse c 04/26/2026
 
 Parse master file table written in C
 
@@ -14,9 +14,16 @@ or
 ./parser.exe S:
 ./parser.exe C: --cutoff "2026-03-19 10:13:18"
 
-will output in format:
-recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path
+dump drive mft to file
+--output <target>
 
+note --output cannot be used with any argument below **
+
+read from file relative or absolute
+--file <mft raw>
+
+will write to stdout csv format:
+recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path
 
 optional argument (one max)
 
@@ -25,8 +32,3 @@ search for new files by time (local system time)
 
 list mft record
 --target <recordno>
-
-same as with default usage but better format for parsing for Qt gui will output in format:
-recordnumber|frn|parent_frn|mtime|ctime|fileattrib|isdir|name|path
---parse
-
