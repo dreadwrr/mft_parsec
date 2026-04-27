@@ -688,12 +688,6 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     if (orig_recno >= entry_capacity)
         return 0;
 
-    if (entries[orig_recno].dir_path_ready && entries[orig_recno].dir_path) {
-        strncpy(out, entries[orig_recno].dir_path, outSize - 1);
-        out[outSize - 1] = '\0';
-        return 1;
-    }
-
     // files use parent directory, dirs use themselves
     if (!entries[orig_recno].is_dir) {
         uint64_t parent_frn = entries[orig_recno].parent_frn;
@@ -710,6 +704,14 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
         recno = parent_recno;
     }
 
+    uint32_t target_recno = recno;
+
+    if (entries[recno].dir_path_ready && entries[recno].dir_path) {
+        strncpy(out, entries[recno].dir_path, outSize - 1);
+        out[outSize - 1] = '\0';
+        return 1;
+    }
+    
     while (1) {
         if (recno >= entry_capacity)
             return 0;
@@ -779,10 +781,20 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     char *tmp = _strdup(out);
     if (!tmp) return 0;
 
-    free(entries[orig_recno].dir_path);
-    entries[orig_recno].dir_path = tmp;
-    entries[orig_recno].dir_path_ready = 1;
-    
+    // its a dir cache and save the path
+    free(entries[target_recno].dir_path);
+    entries[target_recno].dir_path = tmp;
+    entries[target_recno].dir_path_ready = 1;
+
+    // its a file save its path
+    if (orig_recno != target_recno) {
+        tmp = _strdup(out);
+        if (!tmp) return 0;
+        free(entries[orig_recno].dir_path);
+        entries[orig_recno].dir_path = tmp;
+        entries[orig_recno].dir_path_ready = 1;
+    }
+
     return 1;
 }
 
@@ -798,21 +810,30 @@ int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, si
 
     if (recno >= entry_capacity)
         return 0;
+    // can only be root record 5
+    if (strcmp(name, ".") == 0) {
+        if (outSize < 2)
+            return 0;
+        strncpy(out, "\\", outSize - 1);
+        out[outSize - 1] = '\0';
+        return 1;
+    }
 
     // initially build the dir path
     if (!BuildDirPath(recno, dir, sizeof(dir)))
         return 0;
 
-    // direcory just uses parent path
-    // files uses full path
     // if failure as in no name or otherwise return path so can be debugged
     strncpy(out, dir, outSize - 1);
     out[outSize - 1] = '\0';
     
+    // direcory just uses parent path finish early
+
     if (entries[recno].is_dir || !name || name[0] == '\0') {
         return 1;
     }
 
+    // files uses full path
     // build the file path
 
     pos = strlen(out);
@@ -825,11 +846,8 @@ int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, si
         pos = 1;
     }
 
-    // root
-    if (strcmp(name, ".") == 0)
-        return 1;
-
     // join filename
+
     if (pos > 1) {
         if (pos + 1 >= outSize)
             return 0;
