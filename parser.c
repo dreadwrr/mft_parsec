@@ -250,7 +250,6 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             usn = si->usn;
         }
 
-
         if (attr->type == 0x30 && attr->non_resident == 0) {
             FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)attr;
 
@@ -369,6 +368,8 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 
         entries[recno].link_index = link_count;
         entries[recno].link_count = name_count;
+        
+        // only save whatever hardlinks fit in base record
         for (int i = 0; i < name_count; i++) {
             AppendLink(
                 (uint32_t)(frn & FRN_RECORD_MASK),
@@ -1251,25 +1252,29 @@ int main(int argc, char *argv[]) {
 
     // parsing complete
 
-    // check extension records for over flows ie name missing <--
-    for (int i = 0; i < ext_count; i++) {
-        uint32_t b = ext[i].base_recno;
 
-        if (entries[b].in_use && (entries[b].name == NULL || entries[b].name[0] == '\0') && entries[b].frn == ext[i].frn) {
-
-            entries[b].name = _strdup(ext[i].name);
-            entries[b].name_len = ext[i].name_len;
-            entries[b].parent_frn = ext[i].parent_frn;
-        }
-    }
 
     /* output area */
 
     if (record_count) {
+       
         char path[MAX_PTH];
 
-        /* print mft entries for run 
-           recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path */
+
+        // check extension records for over flows ie name missing <--
+        for (int i = 0; i < ext_count; i++) {
+            uint32_t b = ext[i].base_recno;
+
+            if (entries[b].in_use && (entries[b].name == NULL || entries[b].name[0] == '\0') && entries[b].frn == ext[i].frn) {
+                free(entries[b].name);
+                entries[b].name = _strdup(ext[i].name);
+                entries[b].name_len = ext[i].name_len;
+                entries[b].parent_frn = ext[i].parent_frn;
+            }
+        }
+
+
+        /* print mft entries for run */
 
         if (cutoff_time == 0 && !has_target) {
 
