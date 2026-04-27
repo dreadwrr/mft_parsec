@@ -25,7 +25,9 @@ read from file relative or absolute
 will write to stdout csv format:
 recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path
 
-optional argument (one max)
+for extended csv with better readability and timestamps use --csv
+
+and optional argument (one max)
 
 search for new files by time (local system time)
 --cutoff "2026-03-19 10:13:18" or 2026-03-19T10:13:18
