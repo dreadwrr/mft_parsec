@@ -1349,7 +1349,7 @@ int main(int argc, char *argv[]) {
         /* search by time */
         } else if (cutoff_time > 0) {
 
-            for (uint32_t i = 0; i < entry_count; i++) {
+            for (uint32_t i = 0; i < entry_capacity; i++) {
                 if (!entries[i].in_use)
                     continue;
                 if (!entries[i].name)
@@ -1556,7 +1556,7 @@ void FormatFileTime(uint64_t ft, char *out, size_t outSize) {
 void free_processed(unsigned char *buff) {
 
     if (entries) {
-        for (uint32_t i = 0; i < entry_count; i++) {
+        for (uint32_t i = 0; i < entry_capacity; i++) {
             free(entries[i].dir_path);
             free(entries[i].name);
         }
