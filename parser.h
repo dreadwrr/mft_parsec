@@ -148,12 +148,24 @@ typedef struct {
     uint64_t access_time;
 } FileEntry;
 
+typedef struct {
+    uint32_t recno;
+    uint32_t base_recno;
+    uint64_t frn;
+    uint64_t parent_frn;
+    char *name;
+    uint16_t name_len;
+} ExtEntry;
+
 extern LinkEntry *links;
 extern uint32_t link_count;
 extern uint32_t link_capacity;
 extern FileEntry *entries;
 extern uint32_t entry_count;
 extern uint32_t entry_capacity;
+extern ExtEntry *ext;
+extern uint32_t ext_count;
+extern uint32_t ext_capacity;
 
 int BuildDirPath(uint32_t recno, char *out, size_t outSize);
 int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, size_t outSize);

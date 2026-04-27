@@ -18,6 +18,9 @@ uint32_t link_capacity = 0;
 FileEntry *entries = NULL;
 uint32_t entry_capacity = 0;
 uint32_t entry_count = 0;
+ExtEntry *ext = NULL;
+uint32_t ext_capacity = 0;
+uint32_t ext_count = 0;
 
 static const uint64_t FRN_RECORD_MASK = 0x0000FFFFFFFFFFFFULL;
 
@@ -126,6 +129,19 @@ void EnsureEntryCapacity(uint32_t recno) {
     entry_capacity = new_capacity;
 }
 
+void EnsureExtCapacity(void) {
+    if (ext_count < ext_capacity)
+        return;
+    uint32_t new_capacity = ext_capacity ? ext_capacity * 2 : 1024;
+    ExtEntry *new_ext = realloc(ext, new_capacity * sizeof(ExtEntry));
+    if (!new_ext) {
+        fprintf(stderr, "ext capacity realloc failed\n");
+        exit(1);
+    }
+    ext = new_ext;
+    ext_capacity = new_capacity;
+}
+
 void AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *name) {
     EnsureLinkCapacity();
     links[link_count].recno = recno;
@@ -138,6 +154,22 @@ void AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *n
         exit(1);
     }
     link_count++;
+}
+
+void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t parent_frn, const char *name) {
+
+    EnsureExtCapacity();
+    ext[ext_count].recno = recno;
+    ext[ext_count].base_recno = base_recno;
+    ext[ext_count].frn = frn;
+    ext[ext_count].parent_frn = parent_frn;
+    ext[ext_count].name = _strdup(name);
+    ext[ext_count].name_len = strlen(name);
+    if (!ext[ext_count].name) {
+        fprintf(stderr, "strdup failed\n");
+        exit(1);
+    }
+    ext_count++;
 }
 
 // uint8_t is_reparse = 0;
@@ -170,9 +202,9 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     char name[1024] = {0};
     uint64_t size = 0;
 
+    uint8_t in_use = 0;
     uint8_t is_dir = 0;
     uint8_t has_ads = 0;
-
 
     hrec = (FILE_RECORD_HEADER *)buf;
     if (hrec->first_attr_offset >= record_size)
@@ -187,11 +219,12 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     if (!(hrec->flags & 0x0001))
         return;
 
+    // in_use = (hrec->flags & 0x0001) ? 1 : 0;
+
     is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 
     if (hrec->base_record != 0) {
-        return;
-        // frn = hrec->base_record;  ** ignore extension records as this is for file search purposes **
+        frn = hrec->base_record;
     } else {
         frn = ((uint64_t)hrec->sequence_number << 48) | hrec->record_number;  // frn = ((uint64_t)hrec->sequence_num << 48) | recno;  // original. inferred
     }
@@ -221,6 +254,11 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         if (attr->type == 0x30 && attr->non_resident == 0) {
             FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)attr;
 
+            // some records may not have the name is base record store parent frn and get name after finishing from extentry
+
+            if (!best_parent_frn)
+                best_parent_frn = fn->parent_ref;
+            
             // prefer Windows or Windows&Dos
             if (fn->name_type != 2 && fn->name_length < 512 && name_count < 16) {
 
@@ -253,8 +291,6 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
                     continue;
                 }
-
-                
 
                 if (!got_name) {
                     // Base record store first name as canonical
@@ -291,7 +327,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
     }
 
-    if (hrec->base_record == 0 && got_name) {
+    if (hrec->base_record == 0) {
 
         EnsureEntryCapacity(recno);
         entry_count++;
@@ -307,15 +343,19 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].record_offset = hrec->record_number * record_size;
 
         entries[recno].name = _strdup(best_name);
-        if (!entries[recno].name) {
-            entries[recno].in_use = 0;
-            return;
-        }
+
+        // if (!entries[recno].name) {
+            // entries[recno].in_use = 0;
+            // return;
+        // }
 
         entries[recno].name_len = best_name_len;
 
         entries[recno].size = size;
+
+        // entries[recno].in_use = in_use;
         entries[recno].in_use = 1;
+
         entries[recno].is_dir = is_dir;
         entries[recno].has_ads = has_ads;
         entries[recno].hard_link_count = hrec->hard_link_count;
@@ -337,6 +377,16 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                 names[i]
             );
         }
+        
+    // extension record
+    } else {
+        AppendExtension(
+            recno,
+            (uint32_t)(frn & FRN_RECORD_MASK),
+            frn,
+            best_parent_frn,
+            best_name
+        );
     }
 }
 
@@ -612,7 +662,6 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
         
         run_number++;
         
-
         // mft run data for run_number
         // printf("Run %d: LCN=%lld clusters=%llu byte_offset=%llu bytes=%llu\n", x, (long long)currentLCN,
             // (unsigned long long)runLength, (unsigned long long)(currentLCN * bytesPerCluster),
@@ -638,8 +687,6 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
 
     if (orig_recno >= entry_capacity)
         return 0;
-    if (!entries[orig_recno].in_use)
-        return 0;
 
     if (entries[orig_recno].dir_path_ready && entries[orig_recno].dir_path) {
         strncpy(out, entries[orig_recno].dir_path, outSize - 1);
@@ -655,8 +702,7 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
 
         if (parent_recno >= entry_capacity)
             return 0;
-        if (!entries[parent_recno].in_use)
-            return 0;
+
         // if ((uint16_t)(entries[parent_recno].frn >> 48) != parent_seq)
             // return 0;
         if (entries[parent_recno].sequence_num != parent_seq)
@@ -666,9 +712,6 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
 
     while (1) {
         if (recno >= entry_capacity)
-            return 0;
-
-        if (!entries[recno].in_use)
             return 0;
 
         if (depth >= 1024)
@@ -692,8 +735,8 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
             return 0;
         if (parent_recno >= entry_capacity)
             return 0;
-        if (!entries[parent_recno].in_use)
-            return 0;
+        // if (!entries[parent_recno].in_use)
+            // return 0;
         // if ((uint16_t)(entries[parent_recno].frn >> 48) != parent_seq)
             // return 0;
         if (entries[parent_recno].sequence_num != parent_seq)
@@ -755,26 +798,23 @@ int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, si
 
     if (recno >= entry_capacity)
         return 0;
-    if (!entries[recno].in_use)
-        return 0;
 
     // initially build the dir path
     if (!BuildDirPath(recno, dir, sizeof(dir)))
         return 0;
-    
+
     // direcory just uses parent path
     // files uses full path
     // if failure as in no name or otherwise return path so can be debugged
-
+    strncpy(out, dir, outSize - 1);
+    out[outSize - 1] = '\0';
+    
     if (entries[recno].is_dir || !name || name[0] == '\0') {
-        strncpy(out, dir, outSize - 1);
-        out[outSize - 1] = '\0';
         return 1;
     }
 
     // build the file path
-    strncpy(out, dir, outSize - 1);
-    out[outSize - 1] = '\0';
+
     pos = strlen(out);
 
     // empty path is one \\.
@@ -1191,6 +1231,20 @@ int main(int argc, char *argv[]) {
         record_count = ReadAttributes(h, buf, record_size, hrec, bytesPerSector);
     }
 
+    // parsing complete
+
+    // check extension records for over flows ie name missing <--
+    for (int i = 0; i < ext_count; i++) {
+        uint32_t b = ext[i].base_recno;
+
+        if (entries[b].in_use && (entries[b].name == NULL || entries[b].name[0] == '\0') && entries[b].frn == ext[i].frn) {
+
+            entries[b].name = _strdup(ext[i].name);
+            entries[b].name_len = ext[i].name_len;
+            entries[b].parent_frn = ext[i].parent_frn;
+        }
+    }
+
     /* output area */
 
     if (record_count) {
@@ -1203,10 +1257,14 @@ int main(int argc, char *argv[]) {
 
             printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
 
+            uint32_t failed = 0;
+
             /* write different format than default */
             for (uint32_t recno = 0; recno < entry_capacity; recno++) {
 
-                if (!entries[recno].name)
+                // if (!entries[recno].name)
+                    // continue;
+                if (!entries[recno].in_use)
                     continue;
 
                 if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
@@ -1233,7 +1291,8 @@ int main(int argc, char *argv[]) {
                     for (uint32_t i = 0; i < entries[recno].link_count; i++) {
                         LinkEntry *lnk = &links[entries[recno].link_index + i];
                         if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
-                            printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d\"%s\",\"%s\"\n",
+
+                            printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
                                 (unsigned long)lnk->recno,
                                 entries[recno].sequence_num,
                                 (unsigned long long)lnk->frn,
@@ -1250,10 +1309,12 @@ int main(int argc, char *argv[]) {
                                 (int) entries[recno].has_ads,
                                 lnk->name,
                                 path);
-                        }
+                        } 
                     }
-                }
+                } 
             }
+            if (failed)
+                fprintf(stderr, "BuildPath failed for %u entries\n", failed);
             ret = 0;
 
         /* search by time */
@@ -1299,10 +1360,10 @@ int main(int argc, char *argv[]) {
         } else if (has_target) {
             
             for (uint32_t i = 0; i < entry_capacity; i++) {
-                if (!entries[i].in_use)
-                    continue;
-                if (!entries[i].name)
-                    continue;
+                // if (!entries[i].in_use)
+                    // continue;
+                // if (!entries[i].name)
+                    // continue;
 
                 if (i == target_recno) {
                     uint32_t attrs = entries[i].file_attribs;
@@ -1480,6 +1541,14 @@ void free_processed(unsigned char *buff) {
         }
         free(links);
         links = NULL;
+    }
+    
+    if (ext) {
+        for (uint32_t i = 0; i < ext_count; i++) {
+            free(ext[i].name);
+        }
+        free(ext);
+        ext = NULL;
     }
 
     free(buff);
