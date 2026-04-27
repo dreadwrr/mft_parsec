@@ -172,9 +172,6 @@ void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t
     ext_count++;
 }
 
-// uint8_t is_reparse = 0;
-// is_reparse = (si->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 1 : 0;
-// entries[recno].is_reparse = is_reparse;
 void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, uint32_t record_size) {
 
     FILE_RECORD_HEADER *hrec;
@@ -187,6 +184,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     uint64_t modification_time = 0;
     uint64_t mft_modification_time = 0;
     uint64_t access_time = 0;
+    // uint8_t is_reparse = 0;
 
     char names[16][1024] = {0};
     uint64_t parent_frns[16] = {0};
@@ -216,15 +214,17 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     if (!apply_usa(buf, bytesPerSector)) // apply fixups
         return;
 
-    if (!(hrec->flags & 0x0001))
+    // only in_use as this is for file search forensic level not needed
+    if (!(hrec->flags & 0x0001))    
         return;
-
     // in_use = (hrec->flags & 0x0001) ? 1 : 0;
 
     is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 
+    // extension record
     if (hrec->base_record != 0) {
         frn = hrec->base_record;
+    // base record
     } else {
         frn = ((uint64_t)hrec->sequence_number << 48) | hrec->record_number;  // frn = ((uint64_t)hrec->sequence_num << 48) | recno;  // original. inferred
     }
@@ -248,12 +248,13 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             mft_modification_time = si->mft_modification_time;
             access_time = si->access_time;
             usn = si->usn;
+            // is_reparse = (si->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 1 : 0;
         }
 
         if (attr->type == 0x30 && attr->non_resident == 0) {
             FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)attr;
 
-            // some records may not have the name is base record store parent frn and get name after finishing from extentry
+            // some records may not have a usable name (only dos) in base record. store parent frn and get name after finishing from ExtEntry
 
             if (!best_parent_frn)
                 best_parent_frn = fn->parent_ref;
@@ -291,13 +292,17 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
                     continue;
                 }
 
+                // Base record store first name as canonical
                 if (!got_name) {
-                    // Base record store first name as canonical
+                    
                     memcpy(best_name, name, name_len + 1);
                     best_name_len = (uint16_t)name_len;
                     best_parent_frn = fn->parent_ref;
                     got_name = 1;
-                } else {
+                } 
+                
+                // store others as links even though above is technically a link
+                else {
                     memcpy(names[name_count], name, name_len + 1);
                     parent_frns[name_count] = fn->parent_ref;
                     name_count++;
@@ -339,15 +344,9 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         // uint32_t parent_recno = (uint32_t)(best_parent_frn & FRN_RECORD_MASK);
         // entries[recno].parent_sequence_num = (uint16_t)(best_parent_frn >> 48);
         //
-        entries[recno].record_offset = hrec->record_number * record_size;
+        entries[recno].record_offset = hrec->record_number * record_size;  // for --target diagnostics mode
 
         entries[recno].name = _strdup(best_name);
-
-        // if (!entries[recno].name) {
-            // entries[recno].in_use = 0;
-            // return;
-        // }
-
         entries[recno].name_len = best_name_len;
 
         entries[recno].size = size;
@@ -365,6 +364,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].modification_time = modification_time;
         entries[recno].mft_modification_time = mft_modification_time;
         entries[recno].access_time = access_time;
+        // entries[recno].is_reparse = is_reparse;
 
         entries[recno].link_index = link_count;
         entries[recno].link_count = name_count;
@@ -381,15 +381,19 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         
     // extension record
     } else {
-        AppendExtension(
-            recno,
-            (uint32_t)(frn & FRN_RECORD_MASK),
-            frn,
-            best_parent_frn,
-            best_name
-        );
+        if (got_name) {
+            AppendExtension(
+                recno,
+                (uint32_t)(frn & FRN_RECORD_MASK),
+                frn,
+                best_parent_frn,
+                best_name
+            );
+        }
     }
 }
+
+/* Read saved mft */
 
 uint32_t ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
     // read saved mft
@@ -460,6 +464,9 @@ uint64_t ReadAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE
     
     return 0;
 }
+/* end Read saved mft */
+
+/* Write mft*/
 
 uint32_t RunWrite(HANDLE h, HANDLE o, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
     // write
@@ -578,6 +585,9 @@ uint64_t WriteAttributes(HANDLE h, HANDLE o, unsigned char *buf, uint32_t record
     
     return 0;
 }
+/* end Write mft */
+
+/* Regular */
 
 uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
     
@@ -674,6 +684,7 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
             fprintf(stderr, "warning: run not aligned to record size\n");
     }
 }
+/* end Regular start ln 175 */
 
 int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     uint32_t orig_recno = recno;
@@ -697,7 +708,6 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
 
         if (parent_recno >= entry_capacity)
             return 0;
-
         // if ((uint16_t)(entries[parent_recno].frn >> 48) != parent_seq)
             // return 0;
         if (entries[parent_recno].sequence_num != parent_seq)
@@ -738,10 +748,6 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
             return 0;
         if (parent_recno >= entry_capacity)
             return 0;
-        // if (!entries[parent_recno].in_use)
-            // return 0;
-        // if ((uint16_t)(entries[parent_recno].frn >> 48) != parent_seq)
-            // return 0;
         if (entries[parent_recno].sequence_num != parent_seq)
             return 0;
 
@@ -1575,6 +1581,11 @@ void free_processed(unsigned char *buff) {
     }
 
     free(buff);
+    link_capacity = 0;
     entry_capacity = 0;
+    ext_capacity = 0;
     link_count = 0;
+    entry_count = 0;
+    ext_count = 0;
+
 }
