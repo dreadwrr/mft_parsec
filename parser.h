@@ -5,6 +5,8 @@
 #define MAX_PTH 8192
 #define CHUNK_SIZE (64ULL * 1024ULL * 1024ULL)  //  read mft in 64MB chunks
 
+#define MFT_FILE_ATTRIBUTE_DIRECTORY 0x2000
+
 #pragma pack(push, 1)
 typedef struct {
     char     signature[4];

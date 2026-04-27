@@ -157,7 +157,6 @@ void AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *n
 }
 
 void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t parent_frn, const char *name) {
-
     EnsureExtCapacity();
     ext[ext_count].recno = recno;
     ext[ext_count].base_recno = base_recno;
@@ -214,10 +213,10 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     if (!apply_usa(buf, bytesPerSector)) // apply fixups
         return;
 
-    // only in_use as this is for file search forensic level not needed
-    if (!(hrec->flags & 0x0001))    
-        return;
-    // in_use = (hrec->flags & 0x0001) ? 1 : 0;
+    // only in_use if forensic level not needed
+    // if (!(hrec->flags & 0x0001))
+        // return;
+    in_use = (hrec->flags & 0x0001) ? 1 : 0;
 
     is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 
@@ -351,8 +350,8 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 
         entries[recno].size = size;
 
-        // entries[recno].in_use = in_use;
-        entries[recno].in_use = 1;
+        entries[recno].in_use = in_use;
+        // entries[recno].in_use = 1;
 
         entries[recno].is_dir = is_dir;
         entries[recno].has_ads = has_ads;
@@ -942,14 +941,21 @@ int is_file(const char *path) {
 
 void Help(char* argv[]) {
     printf("MFT parsec \n\n\
-    with no argument output all file entries from the MFT \n\n\
-    or can take 1 argument: \n\n\
+    optional drive (default C:) \n\
+    parser.exe \n\
+    parser.exe S: \n\n\
+    save mft to file \n\
+    --output <mft raw> \n\
+    note: above argument cannot be used with options below \n\n\
+    with no argument output all file entries from the MFT to stdout in csv fmt \n\
+    for timestamps use --csv flag \n\n\
+    to read mft from file relative or absolute\n\
+    --file <mft file> \n\n\
+    and can take 1 argument: \n\n\
     search for files by cutoff\n\
     --cutoff \"2026-03-19 10:13:18\" or 2026-03-19T10:13:18\n\n\
     diagnostics list mft record\n\
-    --target <record number>\n\n\
-    output for Qt gui which is same as no argument different format\n\
-    --parse\n");
+    --target <record number>\n\n");
     exit(0);
 }
 
@@ -963,21 +969,22 @@ optional drive (default C:)
 or
 ./parser.exe S:
 ./parser.exe C: --cutoff "2026-03-19 10:13:18"
- 
+or
+./parser.exe --csv
 
 dump drive mft to file
 --output <target>
 
 above argument cannot be used with other options
 
+main output is with with no argument output all valid file entries from the MFT to stdout csv format.
+Note: the format is parser friendly and can be hard to read. use --csv for readable timestamps ect
 
-with no argument output all valid file entries from the MFT to stdout csv format 
 
-
-read saved mft specify relative or absolute
+read saved mft relative or absolute
 --file <raw mft>
 
-also can take 1 argument
+and also can take 1 argument
 
 search for files by cutoff by system time
 --cutoff "2026-03-19 10:13:18" or 2026-03-19T10:13:18
@@ -1041,7 +1048,7 @@ int main(int argc, char *argv[]) {
     uint64_t cutoff_time = 0;
     uint32_t target_recno = 0;
     bool has_target = false;
-
+    bool csv = false;
     // read any drive and or one optional argument
     
     const char *output = NULL;
@@ -1111,6 +1118,13 @@ int main(int argc, char *argv[]) {
                 exit(0);
             }
 
+        } else if (strcmp(argv[arg_index], "--csv") == 0) {
+            csv = true;
+            // for (int i = 1; i < argc; i++) {
+                // if (strcmp(argv[i], "--csv") == 0) {
+                    // csv = true;
+                // }
+            // }
         } else {
             printf("Unknown option %s\n", argv[arg_index]);
             return 1;
@@ -1258,8 +1272,6 @@ int main(int argc, char *argv[]) {
 
     // parsing complete
 
-
-
     /* output area */
 
     if (record_count) {
@@ -1279,72 +1291,160 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        uint32_t attrs = 0;
 
         /* print mft entries for run */
 
         if (cutoff_time == 0 && !has_target) {
+            if (!csv) {
+                printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
 
-            printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
+                uint32_t failed = 0;
 
-            uint32_t failed = 0;
+                /* regular output format */
+                for (uint32_t recno = 0; recno < entry_capacity; recno++) {
 
-            /* write different format than default */
-            for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+                    if (!entries[recno].name)
+                        continue;
+                    // if (!entries[recno].in_use)
+                        // continue;
 
-                // if (!entries[recno].name)
-                    // continue;
-                if (!entries[recno].in_use)
-                    continue;
+                    if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
-                if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
+                        printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
+                            (unsigned long)recno,
+                            entries[recno].sequence_num,
+                            (unsigned long long)entries[recno].frn,
+                            (unsigned long long)entries[recno].parent_frn,
+                            (int) entries[recno].in_use,
+                            (unsigned long long)entries[recno].size,
+                            entries[recno].hard_link_count,
+                            (unsigned long long)entries[recno].modification_time,
+                            (unsigned long long)entries[recno].creation_time,
+                            (unsigned long long)entries[recno].mft_modification_time,
+                            (unsigned long long)entries[recno].access_time,
+                            (unsigned long)entries[recno].file_attribs,
+                            entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                            (int) entries[recno].has_ads,
+                            entries[recno].name,
+                            path);
 
-                    printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
-                        (unsigned long)recno,
-                        entries[recno].sequence_num,
-                        (unsigned long long)entries[recno].frn,
-                        (unsigned long long)entries[recno].parent_frn,
-                        (int) entries[recno].in_use,
-                        (unsigned long long)entries[recno].size,
-                        entries[recno].hard_link_count,
-                        (unsigned long long)entries[recno].modification_time,
-                        (unsigned long long)entries[recno].creation_time,
-                        (unsigned long long)entries[recno].mft_modification_time,
-                        (unsigned long long)entries[recno].access_time,
-                        (unsigned long)entries[recno].file_attribs,
-                        entries[recno].is_dir ? "[DIR]" : "[FILE]",
-                        (int) entries[recno].has_ads,
-                        entries[recno].name,
-                        path);
+                        // print all hardlinks
+                        for (uint32_t i = 0; i < entries[recno].link_count; i++) {
+                            LinkEntry *lnk = &links[entries[recno].link_index + i];
+                            if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
 
-                    // print all hardlinks
-                    for (uint32_t i = 0; i < entries[recno].link_count; i++) {
-                        LinkEntry *lnk = &links[entries[recno].link_index + i];
-                        if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
-
-                            printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
-                                (unsigned long)lnk->recno,
-                                entries[recno].sequence_num,
-                                (unsigned long long)lnk->frn,
-                                (unsigned long long)lnk->parent_frn,
-                                (int) entries[recno].in_use,
-                                (unsigned long long)entries[recno].size,
-                                entries[recno].hard_link_count,
-                                (unsigned long long)entries[recno].modification_time,
-                                (unsigned long long)entries[recno].creation_time,
-                                (unsigned long long)entries[recno].mft_modification_time,
-                                (unsigned long long)entries[recno].access_time,
-                                (unsigned long)entries[recno].file_attribs,
-                                "[HLINK]",
-                                (int) entries[recno].has_ads,
-                                lnk->name,
-                                path);
-                        } 
+                                printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
+                                    (unsigned long)lnk->recno,
+                                    entries[recno].sequence_num,
+                                    (unsigned long long)lnk->frn,
+                                    (unsigned long long)lnk->parent_frn,
+                                    (int) entries[recno].in_use,
+                                    (unsigned long long)entries[recno].size,
+                                    entries[recno].hard_link_count,
+                                    (unsigned long long)entries[recno].modification_time,
+                                    (unsigned long long)entries[recno].creation_time,
+                                    (unsigned long long)entries[recno].mft_modification_time,
+                                    (unsigned long long)entries[recno].access_time,
+                                    (unsigned long)entries[recno].file_attribs,
+                                    "[HLINK]",
+                                    (int) entries[recno].has_ads,
+                                    lnk->name,
+                                    path);
+                            } else {
+                                if (entries[recno].in_use) {
+                                    failed++;
+                                }
+                            }
+                        }
+                    } else {
+                        if (entries[recno].in_use) {
+                            failed++;
+                        }
                     }
-                } 
+                }
+                if (failed)
+                    fprintf(stderr, "BuildPath failed for %u entries\n", failed);
+                ret = 0;
+                
+            /* extended readable csv format */
+            } else {
+                char mt[64], ct[64], mft[64], at[64];
+
+                printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
+
+                uint32_t failed = 0;
+
+                /* write different format than default */
+                for (uint32_t recno = 0; recno < entry_capacity; recno++) {
+
+                    if (!entries[recno].name)
+                        continue;
+                    // if (!entries[recno].in_use)
+                        // continue;
+
+                    if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
+
+                        FormatFileTime(entries[recno].modification_time, mt, sizeof(mt));
+                        FormatFileTime(entries[recno].creation_time, ct, sizeof(ct));
+                        FormatFileTime(entries[recno].mft_modification_time, mft, sizeof(mft));
+                        FormatFileTime(entries[recno].access_time, at, sizeof(at));
+
+                        attrs = entries[recno].file_attribs;
+                        const char *ro   = (attrs & FILE_ATTRIBUTE_READONLY) ? " [READONLY]" : "";
+                        const char *hid  = (attrs & FILE_ATTRIBUTE_HIDDEN) ? " [HIDDEN]" : "";
+                        const char *sys  = (attrs & FILE_ATTRIBUTE_SYSTEM) ? " [SYSTEM]" : "";
+                        const char *dir  = (attrs & MFT_FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
+                        const char *arc  = (attrs & FILE_ATTRIBUTE_ARCHIVE) ? " [ARCHIVE]" : "";
+                        const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
+                        // printf("attrs=0x%08X\n", attrs);
+                        // printf("%lu", (unsigned long)entries[recno].file_attribs);
+                        printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
+                            (unsigned long)recno,
+                            entries[recno].sequence_num,
+                            (unsigned long long)entries[recno].frn,
+                            (unsigned long long)entries[recno].parent_frn,
+                            (int) entries[recno].in_use,
+                            (unsigned long long)entries[recno].size,
+                            entries[recno].hard_link_count,
+                            mt,
+                            ct,
+                            mft,
+                            at,
+                            ro, hid, sys, dir, arc, rep,
+                            entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                            (int) entries[recno].has_ads,
+                            entries[recno].name,
+                            path);
+
+                        // print all hardlinks
+                        for (uint32_t i = 0; i < entries[recno].link_count; i++) {
+                            LinkEntry *lnk = &links[entries[recno].link_index + i];
+                            if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
+
+                                printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
+                                    (unsigned long)lnk->recno,
+                                    entries[recno].sequence_num,
+                                    (unsigned long long)lnk->frn,
+                                    (unsigned long long)lnk->parent_frn,
+                                    (int) entries[recno].in_use,
+                                    (unsigned long long)entries[recno].size,
+                                    entries[recno].hard_link_count,
+                                    mt,
+                                    ct,
+                                    mft,
+                                    at,
+                                    ro, hid, sys, dir, arc, rep,
+                                    "[HLINK]",
+                                    (int) entries[recno].has_ads,
+                                    lnk->name,
+                                    path);
+                            } 
+                        }
+                    } 
+                }
+                ret = 0;
             }
-            if (failed)
-                fprintf(stderr, "BuildPath failed for %u entries\n", failed);
-            ret = 0;
 
         /* search by time */
         } else if (cutoff_time > 0) {
@@ -1395,14 +1495,14 @@ int main(int argc, char *argv[]) {
                     // continue;
 
                 if (i == target_recno) {
-                    uint32_t attrs = entries[i].file_attribs;
+                    attrs = entries[i].file_attribs;
+
                     const char *ro   = (attrs & FILE_ATTRIBUTE_READONLY) ? " [READONLY]" : "";
                     const char *hid  = (attrs & FILE_ATTRIBUTE_HIDDEN) ? " [HIDDEN]" : "";
                     const char *sys  = (attrs & FILE_ATTRIBUTE_SYSTEM) ? " [SYSTEM]" : "";
-                    const char *dir  = (attrs & FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
+                    const char *dir  = (attrs & MFT_FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
                     const char *arc  = (attrs & FILE_ATTRIBUTE_ARCHIVE) ? " [ARCHIVE]" : "";
                     const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
-                    
                     printf("=== DEBUG RECORD %u ===\n", i);
                     printf("flags=0x%08X%s%s%s%s%s%s\n",
                         attrs, ro, hid, sys, dir, arc, rep);
