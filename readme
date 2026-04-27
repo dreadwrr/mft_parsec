@@ -14,7 +14,7 @@ or
 ./parser.exe S:
 ./parser.exe C: --cutoff "2026-03-19 10:13:18"
 
-dump drive mft to file
+dump a drive mft to file
 --output <target>
 
 note --output cannot be used with any argument below **
@@ -23,7 +23,7 @@ read from file relative or absolute
 --file <mft raw>
 
 will write to stdout csv format:
-recordnumber frn parent_frn mtime ctime fileattrib isdir|name|path
+recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path
 
 optional argument (one max)
 
