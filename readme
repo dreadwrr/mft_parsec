@@ -34,3 +34,8 @@ search for new files by time (local system time)
 
 list mft record
 --target <recordno>
+
+Compile instructions
+
+from developer command prompt for vs 2022
+cl.exe /O2 /MT parser.c
