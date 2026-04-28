@@ -56,8 +56,8 @@ typedef struct {
     uint64_t compressed_size;
 } NONRES_ATTR_HEADER;
 
+// RESIDENT_ATTR_HEADER; // originally was first field below, see ln 244 parser.c
 typedef struct {
-    RESIDENT_ATTR_HEADER resident;
     uint64_t creation_time;
     uint64_t modification_time;
     uint64_t mft_modification_time;
@@ -72,8 +72,8 @@ typedef struct {
     uint64_t usn;
 } STANDARD_INFORMATION_ATTR;
 
+// RESIDENT_ATTR_HEADER resident; // originally was first field below, see ln 257 parser.c
 typedef struct {
-    RESIDENT_ATTR_HEADER resident;
     uint64_t parent_ref;
     uint64_t creation_time;
     uint64_t modification_time;

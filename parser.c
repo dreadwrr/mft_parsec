@@ -240,7 +240,9 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         if ((unsigned char *)attr + attr->length > buf + record_size)
             break;
         if (attr->type == 0x10 && attr->non_resident == 0) {
-            STANDARD_INFORMATION_ATTR *si = (STANDARD_INFORMATION_ATTR *)attr;
+            RESIDENT_ATTR_HEADER *res = (RESIDENT_ATTR_HEADER *)attr;  // not used originally. updated to use value_offset <--
+            // (STANDARD_INFORMATION_ATTR *)attr; // this was original see parser.h ln 59
+            STANDARD_INFORMATION_ATTR *si = (STANDARD_INFORMATION_ATTR *)((uint8_t *)attr + res->value_offset);  
             file_attribs = si->file_attributes;
             creation_time = si->creation_time;
             modification_time = si->modification_time;
@@ -251,7 +253,9 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         }
 
         if (attr->type == 0x30 && attr->non_resident == 0) {
-            FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)attr;
+            RESIDENT_ATTR_HEADER *res = (RESIDENT_ATTR_HEADER *)attr;  // not used originally. updated to use value_offset <--
+            // FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)attr; // this was original see parser.h ln 75
+            FILE_NAME_ATTR *fn = (FILE_NAME_ATTR *)((uint8_t *)attr + res->value_offset);
 
             // some records may not have a usable name (only dos) in base record. store parent frn and get name after finishing from ExtEntry
 
@@ -1371,7 +1375,7 @@ int main(int argc, char *argv[]) {
             } else {
                 char mt[64], ct[64], mft[64], at[64];
 
-                printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
+                printf("recno,sequence,frn,parent_frn,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
 
                 uint32_t failed = 0;
 
@@ -1384,6 +1388,9 @@ int main(int argc, char *argv[]) {
                         // continue;
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
+
+                        uint32_t parent_recno = (uint32_t)(entries[recno].parent_frn & FRN_RECORD_MASK);
+                        uint16_t parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
 
                         FormatFileTime(entries[recno].modification_time, mt, sizeof(mt));
                         FormatFileTime(entries[recno].creation_time, ct, sizeof(ct));
@@ -1399,11 +1406,14 @@ int main(int argc, char *argv[]) {
                         const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
                         // printf("attrs=0x%08X\n", attrs);
                         // printf("%lu", (unsigned long)entries[recno].file_attribs);
-                        printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
+
+                        printf("%lu,%hu,%llu,%llu,%u,%u,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
                             (unsigned long long)entries[recno].frn,
                             (unsigned long long)entries[recno].parent_frn,
+                            parent_recno,
+                            parent_seq,
                             (int) entries[recno].in_use,
                             (unsigned long long)entries[recno].size,
                             entries[recno].hard_link_count,
@@ -1422,11 +1432,13 @@ int main(int argc, char *argv[]) {
                             LinkEntry *lnk = &links[entries[recno].link_index + i];
                             if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
 
-                                printf("%lu,%hu,%llu,%llu,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
+                                printf("%lu,%hu,%llu,%llu,%u,%u,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
                                     (unsigned long)lnk->recno,
                                     entries[recno].sequence_num,
                                     (unsigned long long)lnk->frn,
                                     (unsigned long long)lnk->parent_frn,
+                                    parent_recno,
+                                    parent_seq,
                                     (int) entries[recno].in_use,
                                     (unsigned long long)entries[recno].size,
                                     entries[recno].hard_link_count,
