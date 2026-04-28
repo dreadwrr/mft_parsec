@@ -373,15 +373,16 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].link_count = name_count;
         
         // only save whatever hardlinks fit in base record
-        for (int i = 0; i < name_count; i++) {
-            AppendLink(
-                (uint32_t)(frn & FRN_RECORD_MASK),
-                frn,
-                parent_frns[i],
-                names[i]
-            );
+        if (in_use) {
+            for (int i = 0; i < name_count; i++) {
+                AppendLink(
+                    (uint32_t)(frn & FRN_RECORD_MASK),
+                    frn,
+                    parent_frns[i],
+                    names[i]
+                );
+            }
         }
-        
     // extension record
     } else {
         if (got_name) {
@@ -1301,7 +1302,7 @@ int main(int argc, char *argv[]) {
 
         if (cutoff_time == 0 && !has_target) {
             if (!csv) {
-                printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
+                printf("recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
 
                 uint32_t failed = 0;
 
