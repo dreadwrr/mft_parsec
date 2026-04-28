@@ -1375,7 +1375,7 @@ int main(int argc, char *argv[]) {
             } else {
                 char mt[64], ct[64], mft[64], at[64];
 
-                printf("recno,sequence,frn,parent_frn,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified, access_time,file_attribs,type,has_ads,name,path\n");
+                printf("recno,sequence,frn,parent_frn,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
 
                 uint32_t failed = 0;
 
@@ -1401,13 +1401,14 @@ int main(int argc, char *argv[]) {
                         const char *ro   = (attrs & FILE_ATTRIBUTE_READONLY) ? " [READONLY]" : "";
                         const char *hid  = (attrs & FILE_ATTRIBUTE_HIDDEN) ? " [HIDDEN]" : "";
                         const char *sys  = (attrs & FILE_ATTRIBUTE_SYSTEM) ? " [SYSTEM]" : "";
-                        const char *dir  = (attrs & MFT_FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
                         const char *arc  = (attrs & FILE_ATTRIBUTE_ARCHIVE) ? " [ARCHIVE]" : "";
                         const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
+                        const char *spa = (attrs & FILE_ATTRIBUTE_SPARSE_FILE)    ? " [SPARSE]"  : "";
+                        const char *rec = (attrs & FILE_ATTRIBUTE_RECALL_ON_OPEN) ? " [RECALL]"  : "";
                         // printf("attrs=0x%08X\n", attrs);
                         // printf("%lu", (unsigned long)entries[recno].file_attribs);
 
-                        printf("%lu,%hu,%llu,%llu,%u,%u,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
+                        printf("%lu,%hu,%llu,%llu,%u,%u,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
                             (unsigned long long)entries[recno].frn,
@@ -1421,7 +1422,7 @@ int main(int argc, char *argv[]) {
                             ct,
                             mft,
                             at,
-                            ro, hid, sys, dir, arc, rep,
+                            ro, hid, sys, arc, rep, spa, rec,
                             entries[recno].is_dir ? "[DIR]" : "[FILE]",
                             (int) entries[recno].has_ads,
                             entries[recno].name,
@@ -1432,7 +1433,7 @@ int main(int argc, char *argv[]) {
                             LinkEntry *lnk = &links[entries[recno].link_index + i];
                             if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
 
-                                printf("%lu,%hu,%llu,%llu,%u,%u,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
+                                printf("%lu,%hu,%llu,%llu,%u,%u,%d,%llu,%hu,%s,%s,%s,%s,%s%s%s%s%s%s%s,%s,%d,\"%s\",\"%s\"\n",
                                     (unsigned long)lnk->recno,
                                     entries[recno].sequence_num,
                                     (unsigned long long)lnk->frn,
@@ -1446,7 +1447,7 @@ int main(int argc, char *argv[]) {
                                     ct,
                                     mft,
                                     at,
-                                    ro, hid, sys, dir, arc, rep,
+                                    ro, hid, sys, arc, rep, spa, rec,
                                     "[HLINK]",
                                     (int) entries[recno].has_ads,
                                     lnk->name,
@@ -1512,12 +1513,13 @@ int main(int argc, char *argv[]) {
                     const char *ro   = (attrs & FILE_ATTRIBUTE_READONLY) ? " [READONLY]" : "";
                     const char *hid  = (attrs & FILE_ATTRIBUTE_HIDDEN) ? " [HIDDEN]" : "";
                     const char *sys  = (attrs & FILE_ATTRIBUTE_SYSTEM) ? " [SYSTEM]" : "";
-                    const char *dir  = (attrs & MFT_FILE_ATTRIBUTE_DIRECTORY) ? " [DIR]" : "";
                     const char *arc  = (attrs & FILE_ATTRIBUTE_ARCHIVE) ? " [ARCHIVE]" : "";
                     const char *rep  = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? " [REPARSE]" : "";
+                    const char *spa = (attrs & FILE_ATTRIBUTE_SPARSE_FILE)    ? " [SPARSE]"  : "";
+                    const char *rec = (attrs & FILE_ATTRIBUTE_RECALL_ON_OPEN) ? " [RECALL]"  : "";
                     printf("=== DEBUG RECORD %u ===\n", i);
-                    printf("flags=0x%08X%s%s%s%s%s%s\n",
-                        attrs, ro, hid, sys, dir, arc, rep);
+                    printf("flags=0x%08X%s%s%s%s%s%s%s\n",
+                        attrs, ro, hid, sys, arc, rep, spa, rec);
                     // printf("file_attributes=0x%08X\n", entries[i].file_attribs);
 
                     printf("frn=%llu\n", (unsigned long long)entries[i].frn);
