@@ -23,9 +23,9 @@ read from file relative or absolute
 --file <mft raw>
 
 will write to stdout csv format:
-recno,sequence,frn,parent_frn,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path
+recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path
 
-for a different format with different timestamps and attrbs use --csv
+for a different format with timestamps and attrbs use --csv
 
 and optional argument (one max)
 
