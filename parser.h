@@ -164,6 +164,7 @@ extern uint32_t link_count;
 extern uint32_t link_capacity;
 extern FileEntry *entries;
 extern uint32_t entry_count;
+extern uint32_t max_count;
 extern uint32_t entry_capacity;
 extern ExtEntry *ext;
 extern uint32_t ext_count;
