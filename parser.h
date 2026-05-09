@@ -4,7 +4,7 @@
 #define MAX_NAME 1024
 #define MAX_PTH 8192
 #define CHUNK_SIZE (64ULL * 1024ULL * 1024ULL)  //  read mft in 64MB chunks
-
+#define FRN_RECORD_MASK 0x0000FFFFFFFFFFFFULL
 #define MFT_FILE_ATTRIBUTE_DIRECTORY 0x2000
 
 #pragma pack(push, 1)
@@ -170,7 +170,12 @@ extern ExtEntry *ext;
 extern uint32_t ext_count;
 extern uint32_t ext_capacity;
 
+uint32_t GetFileRecordSize(const BootSector *bs);
+int apply_usa(unsigned char *buf, uint16_t bytesPerSector);
+void Read(HANDLE drive, void *buffer, uint64_t from, DWORD count);
+void EnsureEntryCapacity(uint32_t recno);
 int BuildDirPath(uint32_t recno, char *out, size_t outSize);
 int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, size_t outSize);
-uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, int has_target);
+uint64_t ntfs_to_epoch_us(uint64_t ntfs);
+uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, bool deleted, bool has_target);
 void free_processed(unsigned char *buff);

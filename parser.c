@@ -24,7 +24,7 @@ ExtEntry *ext = NULL;
 uint32_t ext_capacity = 0;
 uint32_t ext_count = 0;
 
-static const uint64_t FRN_RECORD_MASK = 0x0000FFFFFFFFFFFFULL;
+// static const uint64_t FRN_RECORD_MASK = 0x0000FFFFFFFFFFFFULL;
 
 // prototypes
 uint64_t EpochToNtfs(time_t epoch);
@@ -150,7 +150,7 @@ void AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *n
     links[link_count].frn = frn;
     links[link_count].parent_frn = parent_frn;
     links[link_count].name = _strdup(name);
-    links[link_count].name_len = strlen(name);
+    links[link_count].name_len = (uint16_t)strlen(name);
     if (!links[link_count].name) {
         fprintf(stderr, "strdup failed\n");
         exit(1);
@@ -165,7 +165,7 @@ void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t
     ext[ext_count].frn = frn;
     ext[ext_count].parent_frn = parent_frn;
     ext[ext_count].name = _strdup(name);
-    ext[ext_count].name_len = strlen(name);
+    ext[ext_count].name_len = (uint16_t)strlen(name);
     if (!ext[ext_count].name) {
         fprintf(stderr, "strdup failed\n");
         exit(1);
@@ -173,9 +173,18 @@ void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t
     ext_count++;
 }
 
-void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, uint32_t record_size) {
+void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, uint32_t record_size, bool add_deleted) {
 
-    FILE_RECORD_HEADER *hrec;
+    FILE_RECORD_HEADER *hrec;  // added 05/09/2026
+    hrec = (FILE_RECORD_HEADER *)buf;
+    uint8_t in_use = 0;
+    in_use = (hrec->flags & 0x0001) ? 1 : 0;
+    // note is done to save time for printing to stdout and later iterating in python which can be significant. effect on parsing is minimal **
+    if (!add_deleted && !in_use) {
+        return;
+    }
+
+    
     ATTR_HEADER *attr;
 
     uint64_t frn = 0;    
@@ -201,11 +210,10 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     char name[1024] = {0};
     uint64_t size = 0;
 
-    uint8_t in_use = 0;
     uint8_t is_dir = 0;
     uint8_t has_ads = 0;
 
-    hrec = (FILE_RECORD_HEADER *)buf;
+    // hrec = (FILE_RECORD_HEADER *)buf;  // original spot before add_deleted flag  // added 05/09/2026
     if (hrec->first_attr_offset >= record_size)
         return;
 
@@ -218,7 +226,8 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     // only in_use if forensic level not needed
     // if (!(hrec->flags & 0x0001))
         // return;
-    in_use = (hrec->flags & 0x0001) ? 1 : 0;
+
+    // in_use = (hrec->flags & 0x0001) ? 1 : 0;  // original spot before add_deleted flag  // added 05/09/2026
 
     is_dir = (hrec->flags & 0x0002) ? 1 : 0;
 
@@ -407,7 +416,7 @@ uint32_t ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t 
     uint32_t processed = 0;
     uint64_t remaining = runBytes;
     uint64_t offset = 0;
-    
+    bool deleted = true;
     unsigned char *buffer = malloc((size_t)CHUNK_SIZE);
     if (!buffer) {
         fprintf(stderr, "malloc failed\n");
@@ -421,7 +430,7 @@ uint32_t ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t 
         Read(h, buffer, offset, (DWORD)chunk);
 
         for (uint64_t i = 0; i < records; i++) {
-            ProcessRecord(buffer + (i * record_size), bytesPerSector, startRecno + (uint32_t)i, record_size);
+            ProcessRecord(buffer + (i * record_size), bytesPerSector, startRecno + (uint32_t)i, record_size, deleted);
             processed++;
         }
 
@@ -596,7 +605,7 @@ uint64_t WriteAttributes(HANDLE h, HANDLE o, unsigned char *buf, uint32_t record
 
 /* Regular */
 
-uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
+uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size, bool deleted) {
     
     uint32_t processed = 0;
     uint64_t runBytes = clusters * bytesPerCluster;
@@ -615,7 +624,7 @@ uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPer
         Read(h, buffer, offset, (DWORD)chunk);
 
         for (uint64_t i = 0; i < records; i++) {
-            ProcessRecord(buffer + (i * record_size), bytesPerSector, startRecno + (uint32_t)i, record_size);
+            ProcessRecord(buffer + (i * record_size), bytesPerSector, startRecno + (uint32_t)i, record_size, deleted);
             processed++;
         }
 
@@ -629,7 +638,7 @@ uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPer
 }
 
 
-void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t record_size, bool has_target) {
+void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t record_size, bool deleted, bool has_target) {
 
     int64_t currentLCN = 0;
     uint32_t currentRecno = 0;
@@ -674,7 +683,7 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
 
         currentLCN += runOffset;
 
-        uint32_t processed = ProcessRun(h, currentLCN, runLength, bytesPerCluster, bytesPerSector, currentRecno, record_size);
+        uint32_t processed = ProcessRun(h, currentLCN, runLength, bytesPerCluster, bytesPerSector, currentRecno, record_size, deleted);
         currentRecno += processed;
         // currentRecno += (uint32_t)((runLength * bytesPerCluster) / record_size);  // original
         
@@ -789,7 +798,7 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     if (pos == 0) {
         if (outSize < 2)
             return 0;
-        strcpy(out, "\\");
+        memcpy(out, "\\", 2);
     }
 
     char *tmp = _strdup(out);
@@ -815,7 +824,7 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
 int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, size_t outSize) {
     char dir[MAX_PTH];
 
-    size_t pos, len;
+    size_t pos;
 
     if (!out || outSize == 0)
         return 0;
@@ -856,7 +865,7 @@ int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, si
     if (pos == 0) {
         if (outSize < 2)
             return 0;
-        strcpy(out, "\\");
+        memcpy(out, "\\", 2);
         pos = 1;
     }
 
@@ -879,7 +888,7 @@ int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, si
     return 1;
 }
 
-uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, int has_target) {
+uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, bool deleted, bool has_target) {
     // read mft header
     ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
 
@@ -922,7 +931,7 @@ uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FIL
 
                 unsigned char *run = (unsigned char *)attr + ndata->run_offset;
 
-                ParseRuns(h, run, bytesPerCluster, bytesPerSector, record_size, has_target);
+                ParseRuns(h, run, bytesPerCluster, bytesPerSector, record_size, deleted, has_target);
 
                 // parsing complete output area
                 return record_count;
@@ -956,7 +965,7 @@ void Help(char* argv[]) {
     --output <mft raw> \n\
     note: above argument cannot be used with options below \n\n\
     with no argument output all file entries from the MFT to stdout in csv fmt \n\
-    for timestamps use --csv flag \n\n\
+    for timestamps use --csv flag. also --inuse can be used to limit stdout to in use recordss \n\n\
     to read mft from file relative or absolute\n\
     --file <mft file> \n\n\
     and can take 1 argument: \n\n\
@@ -968,7 +977,7 @@ void Help(char* argv[]) {
 }
 
 /**
-04/30/2026
+05/09/2026
 
 usage:
 
@@ -986,7 +995,8 @@ dump drive mft to file
 above argument cannot be used with other options
 
 main output is with with no argument output all valid file entries from the MFT to stdout csv format.
-Note: the format is parser friendly and can be hard to read. use --csv for readable timestamps ect
+Note: the format is parser friendly and can be hard to read. use --csv for readable timestamps ect.
+in addition --inuse can limit console writes and save time for regular mode.
 
 
 read saved mft relative or absolute
@@ -1005,6 +1015,7 @@ int main(int argc, char *argv[]) {
 
     // printf("sizeof(FileEntry) = %zu\n", sizeof(FileEntry));
     // exit(0);
+
     if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "help") == 0)) {
         Help(argv);
     }
@@ -1017,9 +1028,11 @@ int main(int argc, char *argv[]) {
     int ret = 1;  // assume error
     int arg_index = 1;
 
-    int str_len = 0;
+    size_t str_len = 0;
 
     const char *input = NULL;
+    
+    bool flag_set = false;  // if should stop parsing args
 
     if (argc >= 2) {
         str_len = strlen(argv[1]);
@@ -1045,6 +1058,8 @@ int main(int argc, char *argv[]) {
                 printf("target input not a file: %s", input);
                 exit(0);
             }
+            flag_set = true;
+
             arg_index = 3; // shift
         }
     }
@@ -1052,14 +1067,19 @@ int main(int argc, char *argv[]) {
     char volume[16];  // set target drive ie C: S: E:
 
     snprintf(volume, sizeof(volume), "\\\\.\\%s", drive);  // const char *volume = "\\\\.\\C:";  // original design moved to drive arg
-    
+
     uint64_t cutoff_time = 0;
+
     uint64_t target_recno = 0;
     bool has_target = false;
-    bool csv = false;
+
+    bool deleted = true;  // default is to show all records
+
+    bool csv = false;  // alternative output
+
     // read any drive and or one optional argument
-    
-    const char *output = NULL;
+
+    const char *output = NULL;  // save or dump mode
 
     if (argc > arg_index) {
 
@@ -1089,7 +1109,7 @@ int main(int argc, char *argv[]) {
                 printf("Invalid datetime format 2026-03-19T10:13:18 or \"2026-03-19 10:13:18\" \n");
                 return 1;
             }
-
+            flag_set = true;
         } else if (strcmp(argv[arg_index], "--target") == 0) {
             if (argc <= arg_index + 1) {
                 printf("--target requires a record number\n");
@@ -1104,7 +1124,7 @@ int main(int argc, char *argv[]) {
 
             target_recno = (uint64_t)val;
             has_target = true;
-
+            flag_set = true;
         } else if (!input && strcmp(argv[arg_index], "--output") == 0) {
 
             // strncpy(arg_buf, argv[arg_index + 1], sizeof(arg_buf) - 1);
@@ -1125,7 +1145,7 @@ int main(int argc, char *argv[]) {
                 printf("Failed to open output file: %s\n", output);
                 exit(0);
             }
-
+            flag_set = true;
         } else if (strcmp(argv[arg_index], "--csv") == 0) {
             csv = true;
             // for (int i = 1; i < argc; i++) {
@@ -1133,9 +1153,21 @@ int main(int argc, char *argv[]) {
                     // csv = true;
                 // }
             // }
-        } else {
+          arg_index++;
+
+        } else if (!strcmp(argv[arg_index], "--inuse") == 0) {
             printf("Unknown option %s\n", argv[arg_index]);
             return 1;
+        }
+        
+        // for regular use only
+        // the --inuse flag can save time by limiting console writes or later python list iterating with a smaller list
+        // can be used with --csv alternative format
+
+        if (argc > arg_index && !flag_set) {
+            if (strcmp(argv[arg_index], "--inuse") == 0) {
+                deleted = false;  // limit uneccessary parsing\\stdout
+            }
         }
     }
 
@@ -1152,7 +1184,7 @@ int main(int argc, char *argv[]) {
 
     HANDLE h;
     unsigned char *buf = NULL;
-    LARGE_INTEGER pos;
+
     DWORD bytes_read = 0;
 
     FILE_RECORD_HEADER *hrec;
@@ -1271,7 +1303,7 @@ int main(int argc, char *argv[]) {
         
     // normal mft parse
     } else if (!input) {
-        record_count = ParseAttributes(h, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector, has_target);
+        record_count = ParseAttributes(h, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector, deleted, has_target);
         
     // read saved mft
     } else if (input) {
@@ -1288,7 +1320,7 @@ int main(int argc, char *argv[]) {
 
 
         // check extension records for over flows ie name missing <--
-        for (int i = 0; i < ext_count; i++) {
+        for (uint32_t i = 0; i < ext_count; i++) {
             uint32_t b = ext[i].base_recno;
 
             if (entries[b].in_use && (entries[b].name == NULL || entries[b].name[0] == '\0') && entries[b].frn == ext[i].frn) {
@@ -1493,7 +1525,7 @@ int main(int argc, char *argv[]) {
     
             int is_frn = 0;
             uint16_t seq_no = 0;
-            uint32_t recno = 0;
+            uint64_t recno = 0;
 
             // frn
             if (target_recno >= max_count) {
@@ -1620,6 +1652,12 @@ uint64_t EpochToNtfs(time_t epoch) {
     return ((uint64_t)epoch * TICKS_PER_SECOND) + TICKS_BTWN_1601_1970;
 }
 
+uint64_t ntfs_to_epoch_us(uint64_t ntfs) {
+    if (ntfs == 0) 
+        return 0;
+    return (ntfs - 116444736000000000ULL) / 10ULL;
+}
+
 uint64_t ParseDatetimeToNtfs(const char *input) {
     int year, month, day, hour, min, sec;
 
@@ -1648,6 +1686,7 @@ uint64_t ParseDatetimeToNtfs(const char *input) {
 }
 
 time_t NtfsToEpoch(uint64_t ntfs) {
+    // epoch seconds
     return (time_t)((ntfs - TICKS_BTWN_1601_1970) / TICKS_PER_SECOND);
 }
 
