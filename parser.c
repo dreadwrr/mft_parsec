@@ -1353,7 +1353,7 @@ int main(int argc, char *argv[]) {
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
-                        parent_recno = (entries[recno].parent_frn & FRN_RECORD_MASK);
+                        parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
                         parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
 
                         printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
@@ -1381,10 +1381,10 @@ int main(int argc, char *argv[]) {
 
                                 parent_recno = (uint32_t)(entries[recno].parent_frn & FRN_RECORD_MASK);
                                 parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
-                                printf("%lu,%hu,%lu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
+                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
                                     (unsigned long)lnk->recno,
                                     entries[recno].sequence_num,
-                                    (unsigned long)parent_recno,
+                                    (unsigned long long)parent_recno,
                                     parent_seq,
                                     (int) entries[recno].in_use,
                                     (unsigned long long)entries[recno].size,
@@ -1423,7 +1423,7 @@ int main(int argc, char *argv[]) {
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
-                        parent_recno = (entries[recno].parent_frn & FRN_RECORD_MASK);
+                        parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
                         parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
 
                         FormatFileTime(entries[recno].modification_time, mt, sizeof(mt));
@@ -1459,10 +1459,10 @@ int main(int argc, char *argv[]) {
                             LinkEntry *lnk = &links[entries[recno].link_index + i];
                             if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
 
-                                printf("%lu,%hu,%lu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
+                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
                                     (unsigned long)lnk->recno,
                                     entries[recno].sequence_num,
-                                    (unsigned long)parent_recno,
+                                    (unsigned long long)parent_recno,
                                     parent_seq,
                                     (int) entries[recno].in_use,
                                     (unsigned long long)entries[recno].size,
@@ -1571,9 +1571,9 @@ int main(int argc, char *argv[]) {
                 printf("rec=%u\n", e->record_number);
                 printf("seq=%u\n", e->sequence_num);
 
-                uint32_t parent_recno = (uint32_t)(e->parent_frn & FRN_RECORD_MASK);
-                uint16_t parent_seq = (uint16_t)(e->parent_frn >> 48);
-                printf("parent_rec=%u\n", parent_recno);
+                parent_recno = e->parent_frn & FRN_RECORD_MASK;
+                parent_seq = (uint16_t)(e->parent_frn >> 48);
+                printf("parent_rec=%llu\n", parent_recno);
                 printf("parent_seq=%u\n", parent_seq);
 
                 printf("offset=%llu hex=0x%llx\n", 
