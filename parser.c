@@ -1332,6 +1332,8 @@ int main(int argc, char *argv[]) {
         }
 
         uint32_t attrs = 0;
+        uint64_t parent_recno = 0;
+        uint16_t parent_seq = 0;
 
         /* print mft entries for run */
 
@@ -1340,8 +1342,7 @@ int main(int argc, char *argv[]) {
                 printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
 
                 uint32_t failed = 0;
-                uint32_t parent_recno = 0;
-                uint16_t parent_seq = 0;
+
                 /* regular output format */
                 for (uint32_t recno = 0; recno < max_count + 1; recno++) {
 
@@ -1352,13 +1353,13 @@ int main(int argc, char *argv[]) {
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
-                        parent_recno = (uint32_t)(entries[recno].parent_frn & FRN_RECORD_MASK);
+                        parent_recno = (entries[recno].parent_frn & FRN_RECORD_MASK);
                         parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
 
-                        printf("%lu,%hu,%lu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
+                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
-                            (unsigned long)parent_recno,
+                            (unsigned long long)parent_recno,
                             parent_seq,
                             (int) entries[recno].in_use,
                             (unsigned long long)entries[recno].size,
@@ -1422,8 +1423,8 @@ int main(int argc, char *argv[]) {
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
-                        uint32_t parent_recno = (uint32_t)(entries[recno].parent_frn & FRN_RECORD_MASK);
-                        uint16_t parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
+                        parent_recno = (entries[recno].parent_frn & FRN_RECORD_MASK);
+                        parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
 
                         FormatFileTime(entries[recno].modification_time, mt, sizeof(mt));
                         FormatFileTime(entries[recno].creation_time, ct, sizeof(ct));
@@ -1435,10 +1436,10 @@ int main(int argc, char *argv[]) {
                         // printf("attrs=0x%08X\n", attrs);
                         // printf("%lu", (unsigned long)entries[recno].file_attribs);
                         // ro, hid, sys, arc, rep, spa, rec,
-                        printf("%lu,%hu,%lu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
+                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
-                            (unsigned long)parent_recno,
+                            (unsigned long long)parent_recno,
                             parent_seq,
                             (int) entries[recno].in_use,
                             (unsigned long long)entries[recno].size,
