@@ -177,5 +177,6 @@ void EnsureEntryCapacity(uint32_t recno);
 int BuildDirPath(uint32_t recno, char *out, size_t outSize);
 int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, size_t outSize);
 uint64_t ntfs_to_epoch_us(uint64_t ntfs);
+uint64_t ParseDatetimeToNtfs(const char *input);
 uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, bool deleted, bool has_target);
 void free_processed(unsigned char *buff);

@@ -179,12 +179,11 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     hrec = (FILE_RECORD_HEADER *)buf;
     uint8_t in_use = 0;
     in_use = (hrec->flags & 0x0001) ? 1 : 0;
-    // note is done to save time for printing to stdout and later iterating in python which can be significant. effect on parsing is minimal **
+    // for --inuse flag return early
     if (!add_deleted && !in_use) {
         return;
     }
 
-    
     ATTR_HEADER *attr;
 
     uint64_t frn = 0;    
@@ -356,7 +355,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].record_number = hrec->record_number;
         entries[recno].sequence_num = hrec->sequence_number;
         //
-        // uint32_t parent_recno = (uint32_t)(best_parent_frn & FRN_RECORD_MASK);
+        // uint64_t parent_recno = best_parent_frn & FRN_RECORD_MASK;
         // entries[recno].parent_sequence_num = (uint16_t)(best_parent_frn >> 48);
         //
         entries[recno].record_offset = hrec->record_number * record_size;  // for --target diagnostics mode
@@ -412,7 +411,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 /* Read saved mft */
 
 uint32_t ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
-    // read saved mft
+    // read the saved mft in one run
     uint32_t processed = 0;
     uint64_t remaining = runBytes;
     uint64_t offset = 0;
@@ -802,8 +801,8 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     }
 
     char *tmp = _strdup(out);
-    if (!tmp) return 0;
-
+    if (!tmp) 
+        return 0;
     // its a dir cache and save the path
     free(entries[target_recno].dir_path);
     entries[target_recno].dir_path = tmp;
@@ -812,7 +811,8 @@ int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     // its a file save its path
     if (orig_recno != target_recno) {
         tmp = _strdup(out);
-        if (!tmp) return 0;
+        if (!tmp)
+            return 0;
         free(entries[orig_recno].dir_path);
         entries[orig_recno].dir_path = tmp;
         entries[orig_recno].dir_path_ready = 1;
@@ -908,7 +908,7 @@ uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FIL
 
         if (attr->type == 0x80) {
             if (!attr->non_resident) {
-                printf("$DATA is resident\n");
+                fprintf(stderr, "$DATA is resident\n");
                 return 0;
             } else {
 
@@ -964,8 +964,8 @@ void Help(char* argv[]) {
     save mft to file \n\
     --output <mft raw> \n\
     note: above argument cannot be used with options below \n\n\
-    with no argument output all file entries from the MFT to stdout in csv fmt \n\
-    for timestamps use --csv flag. also --inuse can be used to limit stdout to in use recordss \n\n\
+    with no argument output all entries from the MFT to stdout in csv fmt \n\
+    for timestamps use --csv flag. also --inuse can be used for active records only \n\n\
     to read mft from file relative or absolute\n\
     --file <mft file> \n\n\
     and can take 1 argument: \n\n\
@@ -977,7 +977,7 @@ void Help(char* argv[]) {
 }
 
 /**
-05/09/2026
+05/10/2026
 
 usage:
 
@@ -1110,6 +1110,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             flag_set = true;
+
         } else if (strcmp(argv[arg_index], "--target") == 0) {
             if (argc <= arg_index + 1) {
                 printf("--target requires a record number\n");
@@ -1125,6 +1126,7 @@ int main(int argc, char *argv[]) {
             target_recno = (uint64_t)val;
             has_target = true;
             flag_set = true;
+
         } else if (!input && strcmp(argv[arg_index], "--output") == 0) {
 
             // strncpy(arg_buf, argv[arg_index + 1], sizeof(arg_buf) - 1);
@@ -1146,6 +1148,8 @@ int main(int argc, char *argv[]) {
                 exit(0);
             }
             flag_set = true;
+
+        // for regular use alternate output
         } else if (strcmp(argv[arg_index], "--csv") == 0) {
             csv = true;
             // for (int i = 1; i < argc; i++) {
@@ -1154,15 +1158,16 @@ int main(int argc, char *argv[]) {
                 // }
             // }
           arg_index++;
-
+        
+        // check for invalid
         } else if (!strcmp(argv[arg_index], "--inuse") == 0) {
             printf("Unknown option %s\n", argv[arg_index]);
             return 1;
         }
         
-        // for regular use only
-        // the --inuse flag can save time by limiting console writes or later python list iterating with a smaller list
-        // can be used with --csv alternative format
+        // the --inuse flag was added in and for regular use only
+        // can save time by limiting console writes. Also later in python list iterating with a smaller list
+        // can be used with --csv
 
         if (argc > arg_index && !flag_set) {
             if (strcmp(argv[arg_index], "--inuse") == 0) {
@@ -1336,20 +1341,17 @@ int main(int argc, char *argv[]) {
         uint16_t parent_seq = 0;
 
         /* print mft entries for run */
-
         if (cutoff_time == 0 && !has_target) {
+            
+            /* regular output format */
             if (!csv) {
                 printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
-
-                uint32_t failed = 0;
-
-                /* regular output format */
+                
                 for (uint32_t recno = 0; recno < max_count + 1; recno++) {
-
+                    if (!deleted && !entries[recno].in_use)
+                        continue;
                     if (!entries[recno].name)
                         continue;
-                    // if (!entries[recno].in_use)
-                        // continue;
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
@@ -1405,21 +1407,17 @@ int main(int argc, char *argv[]) {
 
                 ret = 0;
                 
-            /* extended readable csv format */
+            /* write different format than default */
             } else {
                 char mt[64], ct[64], mft[64], at[64];
 
                 printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
 
-                uint32_t failed = 0;
-
-                /* write different format than default */
                 for (uint32_t recno = 0; recno < max_count + 1; recno++) {
-
                     if (!entries[recno].name)
                         continue;
-                    // if (!entries[recno].in_use)
-                        // continue;
+                    if (!deleted && !entries[recno].in_use)
+                        continue;
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
 
@@ -1432,10 +1430,9 @@ int main(int argc, char *argv[]) {
                         FormatFileTime(entries[recno].access_time, at, sizeof(at));
 
                         attrs = entries[recno].file_attribs;
-                        
                         // printf("attrs=0x%08X\n", attrs);
                         // printf("%lu", (unsigned long)entries[recno].file_attribs);
-                        // ro, hid, sys, arc, rep, spa, rec,
+
                         printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
@@ -1476,7 +1473,7 @@ int main(int argc, char *argv[]) {
                                     (int) entries[recno].has_ads,
                                     lnk->name,
                                     path);
-                            } 
+                            }
                         }
                     } 
                 }
@@ -1489,19 +1486,16 @@ int main(int argc, char *argv[]) {
             for (uint32_t i = 0; i < max_count + 1; i++) {
                 if (entries[i].is_dir)
                     continue;
-                if (!entries[i].in_use)
-                    continue;
                 if (!entries[i].name)
+                    continue;
+                if (!entries[i].in_use)
                     continue;
 
                 uint64_t mod_time = entries[i].modification_time;
                 uint64_t creation_time = entries[i].creation_time;
 
                 // verify cutoff_time matches from arg
-                // printf("cutoff=%llu mod_time=%llu creation_time=%llu\n",
-                    // (unsigned long long)cutoff_time,
-                    // (unsigned long long)mod_time,
-                    // (unsigned long long)creation_time);
+                // printf("cutoff=%llu mod_time=%llu creation_time=%llu\n", (unsigned long long)cutoff_time, (unsigned long long)mod_time, (unsigned long long)creation_time);
  
                 if (!(mod_time >= cutoff_time || creation_time >= cutoff_time))
                     continue;
@@ -1561,6 +1555,7 @@ int main(int argc, char *argv[]) {
                 const char *rec = (attrs & FILE_ATTRIBUTE_RECALL_ON_OPEN) ? " [RECALL]"  : "";
                 const char *notc = (attrs & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED) ? " [NOTINDEXED]" : "";
                 printf("=== DEBUG RECORD %u ===\n", e->record_number);
+
                 printf("flags=0x%08X%s%s%s%s%s%s%s\n",
                     attrs, ro, hid, sys, arc, rep, spa, rec);
                 // printf("file_attributes=0x%08X\n", entries[i].file_attribs);
@@ -1588,12 +1583,6 @@ int main(int argc, char *argv[]) {
 
                 printf("hard_links=%u\n", e->hard_link_count);
 
-                // original design print
-                // printf("creation=%llu\n", (unsigned long long)e->creation_time);
-                // printf("modification=%llu\n", (unsigned long long)e->modification_time);
-                // printf("mft_modification=%llu\n", (unsigned long long)e->mft_modification_time);
-                // printf("access=%llu\n", (unsigned long long)e->access_time);
-
                 char out[64];
 
                 uint64_t times[4] = {
@@ -1614,8 +1603,10 @@ int main(int argc, char *argv[]) {
                     FormatFileTime(times[t], out, sizeof(out));
                     printf("%s=%s\n", labels[t], out);
                 }
+
                 printf("Last Usn=%llu\n", (unsigned long long)e->usn);
-                if (BuildPath(e->record_number, e->name, e->name_len, path, sizeof(path))) {
+
+                if (e->name && BuildPath(e->record_number, e->name, e->name_len, path, sizeof(path))) {
                     printf("path=%s\n", path);
                 } else {
                     printf("path=(failed)\n");
@@ -1633,7 +1624,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // cleanup
     free_processed(buf);
 
     CloseHandle(h);
@@ -1649,14 +1639,14 @@ int main(int argc, char *argv[]) {
         return 1;
 }
 
-uint64_t EpochToNtfs(time_t epoch) {
-    return ((uint64_t)epoch * TICKS_PER_SECOND) + TICKS_BTWN_1601_1970;
-}
-
 uint64_t ntfs_to_epoch_us(uint64_t ntfs) {
-    if (ntfs == 0) 
+    if (ntfs == 0)
         return 0;
     return (ntfs - 116444736000000000ULL) / 10ULL;
+}
+
+uint64_t EpochToNtfs(time_t epoch) {
+    return ((uint64_t)epoch * TICKS_PER_SECOND) + TICKS_BTWN_1601_1970;
 }
 
 uint64_t ParseDatetimeToNtfs(const char *input) {
