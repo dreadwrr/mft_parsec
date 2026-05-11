@@ -3,7 +3,7 @@ github https://github.com/dreadwrr/pyparsec
 
 project name parsec or parse c
 
-Parse master file table written in C
+Parse master file table
 
 Initial release and will update if spotting anything from use. if searching for new files with --cutoff
 it is system time. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and the
