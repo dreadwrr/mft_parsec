@@ -1,7 +1,7 @@
 python hooks are in developement have to test output but its looking good
 github https://github.com/dreadwrr/pyparsec
 
-tentative name parsec or parse c 05/09/2026
+tentative name parsec or parse c
 
 Parse master file table written in C
 
@@ -12,10 +12,10 @@ reason I made it is for my qt app that uses MFT features and needed a solution f
 usage:
 
 optional drive (default C:)
-./parser.exe
+./parsec.exe
 or
-./parser.exe S:
-./parser.exe C: --cutoff "2026-03-19 10:13:18"
+./parsec.exe S:
+./parsec.exe C: --cutoff "2026-03-19 10:13:18"
 
 dump a drive mft to file
 --output <target>
@@ -41,4 +41,4 @@ list mft record
 Compile instructions
 
 from developer command prompt for vs 2022
-cl.exe /O2 /MT parser.c
+cl.exe /O2 /MT parsec.c
