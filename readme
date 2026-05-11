@@ -28,7 +28,7 @@ read from file relative or absolute
 will write to stdout csv format:
 recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path
 
-for a different format with timestamps and attrbs use --csv as well as --inuse can limit console writes and save time for regular mode by only listing active entries
+for a different format with timestamps and attrbs use --csv. as well --inuse can be used to limit console writes and save time for regular mode
 
 and optional argument (one max)
 
