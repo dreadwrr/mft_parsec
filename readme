@@ -43,3 +43,4 @@ Compile instructions
 
 from developer command prompt for vs 2022
 cl.exe /O2 /MT parsec.c
+clang -O2 parsec.c -o parsec.exe
