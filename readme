@@ -1,6 +1,5 @@
 a python hook is available
 github https://github.com/dreadwrr/pyparsec
-questions or feedback please reach me at colby.saigeon@gmail.com
 
 project name parsec or parse c
 
@@ -45,3 +44,5 @@ Compile instructions
 from developer command prompt for vs 2022
 cl.exe /O2 /MT parsec.c
 clang -O2 parsec.c -o parsec.exe
+
+questions or feedback please reach me at colby.saigeon@gmail.com
