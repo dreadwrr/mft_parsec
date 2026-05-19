@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -23,6 +25,7 @@ uint32_t max_count = 0;
 ExtEntry *ext = NULL;
 uint32_t ext_capacity = 0;
 uint32_t ext_count = 0;
+char g_last_error[256];
 
 // static const uint64_t FRN_RECORD_MASK = 0x0000FFFFFFFFFFFFULL;
 
@@ -32,13 +35,46 @@ uint64_t ParseDatetimeToNtfs(const char *input);
 time_t NtfsToEpoch(uint64_t ntfs);
 void FormatFileTime(uint64_t ft, char *out, size_t outSize);
 
+const char* error_string(ErrorCode err) {
+
+    switch (err) {
+        case ERR_OK:
+            return "Success";
+        case PARSE_LINK_ALLOC:
+            return "Link capacity realloc failed";
+        case PARSE_ENTRY_OF:
+            return "Ensure capacity overflow";
+        case PARSE_ENTRY_ALLOC:
+            return "Ensure capacity realloc failed";
+        case PARSE_EXTN_ALLOC:
+            return "Extension capacity realloc failed";
+        case PARSE_LINK_STRDUP:
+            return "Link strdup failed";
+        case PARSE_EXTN_STRDUP:
+            return "Extension strdup failed";
+        case PARSE_MEM_ALLOC:
+            return "While parsing run malloc failed";
+        case PARSE_FAIL:
+            return "mft $DATA is resident unable to parse";
+        case READ_PTR:
+        case READ_FAIL:
+        case READ_SHORT:
+            return g_last_error;
+        case READ_MEM_ALLOC:
+            return "Read Malloc failed";
+            
+        default:
+            return "Unknown error";
+    }
+}
+
 uint32_t GetFileRecordSize(const BootSector *bs) {
     int8_t c = bs->clustersPerFileRecord;
 
     if (c > 0) {
         return (uint32_t)c * (uint32_t)bs->bytesPerSector * (uint32_t)bs->sectorsPerCluster;
     } else {
-        return 1U << (-c);
+        return (uint32_t)1U << (-c);
     }
 }
 
@@ -65,63 +101,73 @@ int apply_usa(unsigned char *buf, uint16_t bytesPerSector) {
     return 1;
 }
 
-void Read(HANDLE drive, void *buffer, uint64_t from, DWORD count) {
+int Read(HANDLE drive, void *buffer, uint64_t from, DWORD count) {
     LARGE_INTEGER pos;
     DWORD bytesRead = 0;
 
     pos.QuadPart = (LONGLONG)from;
 
     if (!SetFilePointerEx(drive, pos, NULL, FILE_BEGIN)) {
-        fprintf(stderr, "SetFilePointerEx failed: %lu\n", GetLastError());
-        exit(1);
+
+        DWORD err = GetLastError();
+        snprintf(g_last_error, sizeof(g_last_error),
+                "SetFilePointerEx failed: %lu", err);
+
+        return READ_PTR;
     }
 
     if (!ReadFile(drive, buffer, count, &bytesRead, NULL)) {
-        fprintf(stderr, "ReadFile failed: %lu\n", GetLastError());
-        exit(1);
+
+        DWORD err = GetLastError();
+        snprintf(g_last_error, sizeof(g_last_error),
+                "ReadFile failed: %lu", err);        
+       
+        return READ_FAIL;
     }
 
     if (bytesRead != count) {
-        fprintf(stderr, "Short read: got %lu bytes, expected %lu\n",
-                bytesRead, count);
-        exit(1);
+
+        snprintf(g_last_error, sizeof(g_last_error),
+                "Short read: got %lu bytes, expected %lu", bytesRead, count); 
+
+        return READ_SHORT;
     }
+    return 0;
 }
 
-void EnsureLinkCapacity(void) {
+
+int EnsureLinkCapacity(void) {
     if (link_count < link_capacity)
-        return;
+        return 0;
 
     uint32_t new_capacity = link_capacity ? link_capacity * 2 : 1024;
 
     LinkEntry *new_links = realloc(links, new_capacity * sizeof(LinkEntry));
     if (!new_links) {
-        fprintf(stderr, "link capacity realloc failed\n");
-        exit(1);
+        return PARSE_LINK_ALLOC;
     }
 
     links = new_links;
     link_capacity = new_capacity;
+    return 0;
 }
 
-void EnsureEntryCapacity(uint32_t recno) {
+int EnsureEntryCapacity(uint32_t recno) {
     if (recno < entry_capacity)
-        return;
-    // printf("EnsureEntryCapacity recno=%lu\n", (unsigned long)recno);  // debug disabled for performance
+        return 0;
+    // printf("EnsureEntryCapacity recno=%lu\n", (unsigned long)recno);  // debug
     uint32_t new_capacity = entry_capacity ? entry_capacity : 1024;
 
     while (new_capacity <= recno) {
         if (new_capacity > UINT32_MAX / 2) {
-            fprintf(stderr, "ensure capacity overflow\n");
-            exit(1);
+            return PARSE_ENTRY_OF;
         }
         new_capacity *= 2;
     }
 
     FileEntry *new_entries = (FileEntry *)realloc(entries, new_capacity * sizeof(FileEntry));
     if (!new_entries) {
-        fprintf(stderr, "ensure capacity realloc failed\n");
-        exit(1);
+        return PARSE_ENTRY_ALLOC;
     }
 
     memset(new_entries + entry_capacity, 0,
@@ -129,37 +175,43 @@ void EnsureEntryCapacity(uint32_t recno) {
 
     entries = new_entries;
     entry_capacity = new_capacity;
+    
+    return 0;
 }
 
-void EnsureExtCapacity(void) {
+int EnsureExtCapacity(void) {
     if (ext_count < ext_capacity)
-        return;
+        return 0;
     uint32_t new_capacity = ext_capacity ? ext_capacity * 2 : 1024;
     ExtEntry *new_ext = realloc(ext, new_capacity * sizeof(ExtEntry));
     if (!new_ext) {
-        fprintf(stderr, "ext capacity realloc failed\n");
-        exit(1);
+        return PARSE_EXTN_ALLOC;
     }
     ext = new_ext;
     ext_capacity = new_capacity;
+    return 0;
 }
 
-void AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *name) {
-    EnsureLinkCapacity();
+int AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *name) {
+    if (EnsureLinkCapacity() != 0)
+        return PARSE_LINK_ALLOC;
+
     links[link_count].recno = recno;
     links[link_count].frn = frn;
     links[link_count].parent_frn = parent_frn;
     links[link_count].name = _strdup(name);
     links[link_count].name_len = (uint16_t)strlen(name);
     if (!links[link_count].name) {
-        fprintf(stderr, "strdup failed\n");
-        exit(1);
+        return PARSE_LINK_STRDUP;
     }
     link_count++;
+    return 0;
 }
 
-void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t parent_frn, const char *name) {
-    EnsureExtCapacity();
+int AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t parent_frn, const char *name) {
+    if (EnsureExtCapacity() != 0)
+        return PARSE_EXTN_ALLOC;
+
     ext[ext_count].recno = recno;
     ext[ext_count].base_recno = base_recno;
     ext[ext_count].frn = frn;
@@ -167,13 +219,13 @@ void AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t
     ext[ext_count].name = _strdup(name);
     ext[ext_count].name_len = (uint16_t)strlen(name);
     if (!ext[ext_count].name) {
-        fprintf(stderr, "strdup failed\n");
-        exit(1);
+        return PARSE_EXTN_STRDUP;
     }
     ext_count++;
+    return 0;
 }
 
-void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, uint32_t record_size, bool add_deleted) {
+int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, uint32_t record_size, bool add_deleted) {
 
     FILE_RECORD_HEADER *hrec;  // added 05/09/2026
     hrec = (FILE_RECORD_HEADER *)buf;
@@ -181,7 +233,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
     in_use = (hrec->flags & 0x0001) ? 1 : 0;
     // for --inuse flag return early
     if (!add_deleted && !in_use) {
-        return;
+        return 0;
     }
 
     ATTR_HEADER *attr;
@@ -214,13 +266,13 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
 
     // hrec = (FILE_RECORD_HEADER *)buf;  // original spot before add_deleted flag  // added 05/09/2026
     if (hrec->first_attr_offset >= record_size)
-        return;
+        return 0;
 
     if (memcmp(hrec->signature, "FILE", 4) != 0)  // sanity check is there a header
-        return;
+        return 0;
 
     if (!apply_usa(buf, bytesPerSector)) // apply fixups
-        return;
+        return 0;
 
     // only in_use if forensic level not needed
     // if (!(hrec->flags & 0x0001))
@@ -251,7 +303,7 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             break;
         if (attr->type == 0x10 && attr->non_resident == 0) {
             RESIDENT_ATTR_HEADER *res = (RESIDENT_ATTR_HEADER *)attr;  // not used originally. updated to use value_offset <--
-            // (STANDARD_INFORMATION_ATTR *)attr; // this was original see parsec.h ln 59
+            // (STANDARD_INFORMATION_ATTR *)attr; // this was original see parsec.h ln 83
             STANDARD_INFORMATION_ATTR *si = (STANDARD_INFORMATION_ATTR *)((uint8_t *)attr + res->value_offset);  
             file_attribs = si->file_attributes;
             creation_time = si->creation_time;
@@ -272,8 +324,8 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             if (!best_parent_frn)
                 best_parent_frn = fn->parent_ref;
             
-            // prefer Windows or Windows&Dos
-            if (fn->name_type != 2 && fn->name_length < 512 && name_count < 16) {
+            // Possible name types Posix, Windows or Windows&Dos. skip Dos
+            if (fn->name_type != 2 && name_count < 16) {
 
                 wchar_t wname[512];
 
@@ -344,12 +396,17 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
     }
 
+    int res = 0;  // if failed to malloc ect
+
+    entry_count++;
     if (hrec->base_record == 0) {
 
-        EnsureEntryCapacity(recno);
+        res = EnsureEntryCapacity(recno);
+        if (res != ERR_OK) {
+            return res;
+        }
         max_count = recno;
-        entry_count++;
-
+        
         entries[recno].frn = frn;
         entries[recno].parent_frn = best_parent_frn;
         entries[recno].record_number = hrec->record_number;
@@ -384,20 +441,24 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
         entries[recno].link_count = name_count;
         
         // only save whatever hardlinks fit in base record
+
         if (in_use) {
             for (int i = 0; i < name_count; i++) {
-                AppendLink(
+                res = AppendLink(
                     (uint32_t)(frn & FRN_RECORD_MASK),
                     frn,
                     parent_frns[i],
                     names[i]
                 );
+                if (res != ERR_OK)
+                    break;
             }
         }
     // extension record
     } else {
         if (got_name) {
-            AppendExtension(
+
+            res = AppendExtension(
                 recno,
                 (uint32_t)(frn & FRN_RECORD_MASK),
                 frn,
@@ -406,86 +467,57 @@ void ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, 
             );
         }
     }
+    
+    return res;
 }
 
 /* Read saved mft */
+   
+int ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
 
-uint32_t ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
-    // read the saved mft in one run
-    uint32_t processed = 0;
+    // read in one run 
+    
+    int res;
+
     uint64_t remaining = runBytes;
     uint64_t offset = 0;
     bool deleted = true;
     unsigned char *buffer = malloc((size_t)CHUNK_SIZE);
     if (!buffer) {
-        fprintf(stderr, "malloc failed\n");
-        exit(1);
+        return READ_MEM_ALLOC;
     }
 
     while (remaining > 0) {
         uint64_t chunk = remaining > CHUNK_SIZE ? CHUNK_SIZE : remaining;
-        uint64_t records = chunk / record_size;
+        uint32_t records = (uint32_t)chunk / record_size;
 
-        Read(h, buffer, offset, (DWORD)chunk);
-
-        for (uint64_t i = 0; i < records; i++) {
-            ProcessRecord(buffer + (i * record_size), bytesPerSector, startRecno + (uint32_t)i, record_size, deleted);
-            processed++;
+        res = Read(h, buffer, offset, (DWORD)chunk);
+        
+        if (res != ERR_OK) {
+            free(buffer);
+            return res;
         }
 
-        startRecno += (uint32_t)records;
+        for (uint32_t i = 0; i < records; i++) {
+            if ((res = ProcessRecord(buffer + i*record_size, bytesPerSector, startRecno + i, record_size, deleted)) != 0) {
+                free(buffer);
+                return res;
+            }
+        }
+
+        startRecno += records;
         offset += chunk;
         remaining -= chunk;
     }
 
     free(buffer);
-    return processed;
-}
-
-uint64_t ReadAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint16_t bytesPerSector) {
-    // first read mft dump header to read the saved mft
-    ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
-
-    while ((unsigned char *)attr < buf + record_size) {
-        if (attr->type == 0xFFFFFFFF) {
-            break;
-        }
-
-        if (attr->length == 0) {
-            break;
-        }
-        // printf("Attr type: 0x%08x len=%u\n", attr->type, attr->length); // debug
-        if (attr->type == 0x80) {
-            if (!attr->non_resident) {
-                fprintf(stderr, "$DATA is resident\n");
-                return 0;
-            } else {
-
-                NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
-
-                uint64_t mft_size = ndata->real_size;
-                uint64_t record_count = mft_size / record_size;
-
-                ReadRun(h, mft_size, bytesPerSector, 0, record_size);
-
-                return record_count;
-
-            }
-            break;
-        }
-
-        attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
-    }
-    
     return 0;
 }
 /* end Read saved mft */
 
-/* Write mft*/
-
 uint32_t RunWrite(HANDLE h, HANDLE o, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
     // write
-    // printf("RunWrite lcn=%llu clusters=%llu\n", (unsigned long long)lcn, (unsigned long long)clusters);
+    // printf("RunWrite lcn=%llu clusters=%llu\n", (unsigned long long)lcn, (unsigned long long)clusters);  // debug
     uint32_t processed = 0;
     uint64_t runBytes = clusters * bytesPerCluster;
     uint64_t offset = lcn * bytesPerCluster;
@@ -500,7 +532,11 @@ uint32_t RunWrite(HANDLE h, HANDLE o, uint64_t lcn, uint64_t clusters, uint64_t 
         uint64_t chunk = runBytes > CHUNK_SIZE ? CHUNK_SIZE : runBytes;
         uint64_t records = chunk / record_size;
 
-        Read(h, buffer, offset, (DWORD)chunk);
+        int res = Read(h, buffer, offset, (DWORD)chunk);
+        if (res != ERR_OK) {
+            fprintf(stderr, "%s\n", error_string(res));
+            exit(res);
+        }
         DWORD written;
         WriteFile(o, buffer, (DWORD)chunk, &written, NULL);
 
@@ -512,7 +548,6 @@ uint32_t RunWrite(HANDLE h, HANDLE o, uint64_t lcn, uint64_t clusters, uint64_t 
     free(buffer);
     return processed;
 }
-
 
 void WriteRuns(HANDLE h, HANDLE o, unsigned char *run, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t record_size) {
     // write the mft runs
@@ -561,87 +596,53 @@ void WriteRuns(HANDLE h, HANDLE o, unsigned char *run, uint64_t bytesPerCluster,
     }
 }
 
-uint64_t WriteAttributes(HANDLE h, HANDLE o, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector) {
-    // read mft header then call WriteRuns 
-    ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
+/* Regular use */
 
-    while ((unsigned char *)attr < buf + record_size) {
-        if (attr->type == 0xFFFFFFFF) {
-            break;
-        }
-
-        if (attr->length == 0) {
-            break;
-        }
-        // printf("Attr type: 0x%08x len=%u\n", attr->type, attr->length); // debug
-        if (attr->type == 0x80) {
-            if (!attr->non_resident) {
-                printf("$DATA is resident\n");
-                return 0;
-            } else {
-
-                NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
-
-                uint64_t mft_size = ndata->real_size;
-                uint64_t record_count = mft_size / record_size;
-
-                unsigned char *run = (unsigned char *)attr + ndata->run_offset;
-
-                WriteRuns(h, o, run, bytesPerCluster, bytesPerSector, record_size);
-
-                return record_count;
-
-            }
-            break;
-        }
-
-        attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
-    }
+int ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t *startRecno, uint32_t record_size, bool deleted) {
     
-    return 0;
-}
-/* end Write mft */
+    int res;
 
-/* Regular */
-
-uint32_t ProcessRun(HANDLE h, uint64_t lcn, uint64_t clusters, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size, bool deleted) {
-    
-    uint32_t processed = 0;
     uint64_t runBytes = clusters * bytesPerCluster;
     uint64_t offset = lcn * bytesPerCluster;
     
     unsigned char *buffer = malloc((size_t)CHUNK_SIZE);
     if (!buffer) {
-        fprintf(stderr, "malloc failed\n");
-        exit(1);
+        return PARSE_MEM_ALLOC;
     }
     
     while (runBytes > 0) {
         uint64_t chunk = runBytes > CHUNK_SIZE ? CHUNK_SIZE : runBytes;
-        uint64_t records = chunk / record_size;
+        uint32_t records = (uint32_t)chunk / record_size;
 
-        Read(h, buffer, offset, (DWORD)chunk);
-
-        for (uint64_t i = 0; i < records; i++) {
-            ProcessRecord(buffer + (i * record_size), bytesPerSector, startRecno + (uint32_t)i, record_size, deleted);
-            processed++;
+        res = Read(h, buffer, offset, (DWORD)chunk);
+        
+        if (res != ERR_OK) {
+            free(buffer);
+            return res;
         }
 
-        startRecno += (uint32_t)records;
+        for (uint32_t i = 0; i < records; i++) {
+            if ((res = ProcessRecord(buffer + (i * record_size), bytesPerSector, *startRecno + i, record_size, deleted)) != 0) {
+                free(buffer);
+                return res;
+            }
+        }
+
+        *startRecno += records;
         offset += chunk;
         runBytes -= chunk;
     }
 
     free(buffer);
-    return processed;
+    return 0;
 }
 
-
-void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t record_size, bool deleted, bool has_target) {
+int ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint32_t record_size, bool deleted, bool has_target) {
 
     int64_t currentLCN = 0;
     uint32_t currentRecno = 0;
     int run_number = 0;
+    int res;
 
     while (*run != 0) {
         uint8_t header = *run++;
@@ -682,8 +683,12 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
 
         currentLCN += runOffset;
 
-        uint32_t processed = ProcessRun(h, currentLCN, runLength, bytesPerCluster, bytesPerSector, currentRecno, record_size, deleted);
-        currentRecno += processed;
+        res = ProcessRun(h, currentLCN, runLength, bytesPerCluster, bytesPerSector, &currentRecno, record_size, deleted);
+        
+        if (res != ERR_OK) {
+            return res;
+        }
+
         // currentRecno += (uint32_t)((runLength * bytesPerCluster) / record_size);  // original
         
         run_number++;
@@ -698,8 +703,84 @@ void ParseRuns(HANDLE h, unsigned char *run, uint64_t bytesPerCluster, uint16_t 
         if (runBytes % record_size != 0)
             fprintf(stderr, "warning: run not aligned to record size\n");
     }
+    
+    return 0; 
 }
-/* end Regular start ln 175 */
+/* end Regular use */
+
+/* main fork. Parse volume mft - write or dump the mft - read from save or dumped mft */
+
+int ParseAttributes(ParseMode mode, HANDLE h, HANDLE o, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, uint64_t *record_count, bool deleted, bool has_target) {
+
+    // read the mft header
+
+    ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
+
+    while ((unsigned char *)attr < buf + record_size) {
+        if (attr->type == 0xFFFFFFFF) {
+            break;
+        }
+
+        if (attr->length == 0) {
+            break;
+        }
+
+        // debug
+        // if (has_target) {
+            // printf("Attr type: 0x%08x len=%u nonresident=%u\n",
+                // attr->type, attr->length, attr->non_resident);
+        // }
+
+        if (attr->type == 0x80) {
+            if (!attr->non_resident) {
+
+                return PARSE_FAIL;
+            } else {
+
+                NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
+
+                uint64_t mft_size = ndata->real_size;
+                if (record_count)
+                    *record_count = mft_size / (uint64_t)record_size;
+
+                if (has_target) {
+                    printf("$DATA is non-resident\n");
+                    printf("first vcn    : %llu\n", (unsigned long long)ndata->lowest_vcn);
+                    printf("run offset   : %u\n", ndata->run_offset);
+                    printf("alloc size   : %llu\n", (unsigned long long)ndata->alloc_size);
+                    printf("real size    : %llu\n", (unsigned long long)mft_size);
+                    printf("init size    : %llu\n", (unsigned long long)ndata->initialized_size);
+                }
+
+                unsigned char *run = (unsigned char *)attr + ndata->run_offset;
+
+                switch(mode) {
+                    
+                    case MODE_PARSE:   
+                        return ParseRuns(h, run, bytesPerCluster, bytesPerSector, record_size, deleted, has_target);
+                        
+                    case MODE_WRITE:
+                        WriteRuns(h, o, run, bytesPerCluster, bytesPerSector, record_size);
+                        break;
+
+                    case MODE_READ:
+                        return ReadRun(h, mft_size, bytesPerSector, 0, record_size);
+                    
+                    default:
+                        return 0;
+                }
+
+                // parsing complete
+
+            }
+            break;
+        }
+
+        attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
+    }
+    
+    return 0;
+}
 
 int BuildDirPath(uint32_t recno, char *out, size_t outSize) {
     uint32_t orig_recno = recno;
@@ -888,61 +969,17 @@ int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, si
     return 1;
 }
 
-uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, bool deleted, bool has_target) {
-    // read mft header
-    ATTR_HEADER *attr = (ATTR_HEADER *)(buf + hrec->first_attr_offset);
-
-    while ((unsigned char *)attr < buf + record_size) {
-        if (attr->type == 0xFFFFFFFF) {
-            break;
-        }
-
-        if (attr->length == 0) {
-            break;
-        }
-
-        // if (has_target) {
-            // printf("Attr type: 0x%08x len=%u nonresident=%u\n",
-                // attr->type, attr->length, attr->non_resident);
-        // }
-
-        if (attr->type == 0x80) {
-            if (!attr->non_resident) {
-                fprintf(stderr, "$DATA is resident\n");
-                return 0;
-            } else {
-
-                NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
-
-                uint64_t mft_size = ndata->real_size;
-                uint64_t record_count = mft_size / record_size;
-                
-                // if (has_target) {
-                    // printf("[RECORD]  : %llu\n", (unsigned long long)record_count);  // for progress indicating
-                // }
-
-                if (has_target) {
-                    printf("$DATA is non-resident\n");
-                    printf("run offset   : %u\n", ndata->run_offset);
-                    printf("alloc size   : %llu\n", (unsigned long long)ndata->alloc_size);
-                    printf("real size    : %llu\n", (unsigned long long)mft_size);
-                    printf("init size    : %llu\n", (unsigned long long)ndata->initialized_size);
-                }
-
-                unsigned char *run = (unsigned char *)attr + ndata->run_offset;
-
-                ParseRuns(h, run, bytesPerCluster, bytesPerSector, record_size, deleted, has_target);
-
-                // parsing complete output area
-                return record_count;
-
-            }
-            break;
-        }
-
-        attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
+int get_drive(const char *path, char out[3]) {
+    if (path && path[0] && path[1] &&
+        isalpha((unsigned char)path[0]) &&
+        path[1] == ':')
+    {
+        out[0] = path[0];
+        out[1] = ':';
+        out[2] = '\0';
+        return 1;
     }
-    
+
     return 0;
 }
 
@@ -977,7 +1014,7 @@ void Help(char* argv[]) {
 }
 
 /**
-05/10/2026
+05/18/2026
 
 usage:
 
@@ -987,7 +1024,7 @@ or
 ./parsec.exe S:
 ./parsec.exe C: --cutoff "2026-03-19 10:13:18"
 or
-./parsec.exe --csv
+./parsec.exe --inuse > myfile.csv
 
 dump drive mft to file
 --output <target>
@@ -1011,6 +1048,7 @@ diagnostics list mft record
 --target <record number> or <frn>
 
 */
+
 int main(int argc, char *argv[]) {
 
     // printf("sizeof(FileEntry) = %zu\n", sizeof(FileEntry));
@@ -1035,31 +1073,43 @@ int main(int argc, char *argv[]) {
     bool flag_set = false;  // if should stop parsing args
 
     if (argc >= 2) {
+
         str_len = strlen(argv[1]);
 
         if (str_len > 1 && str_len <= 3 &&
             isalpha((unsigned char) argv[1][0]) &&
             argv[1][1] == ':') {
 
-            drive_buf[0] = argv[1][0];
-            drive_buf[1] = ':';
-            drive_buf[2] = '\0';
-
-            drive = drive_buf;
-            arg_index = 2;  // shift
-        } else if (strcmp(argv[1], "--file") == 0) {
+            if (get_drive(argv[1], drive_buf)) {
+                drive = drive_buf;
+                arg_index = 2;  // shift
+            }
+        } 
+        else if (strcmp(argv[1], "--file") == 0) {
             if (argc <= arg_index + 1) {
                 printf("--file no source file specified\n");
                 return 0;
             }
 
             input = argv[arg_index + 1];
+            
+            // this is file mode so exit if volume $MFT
+            if (get_drive(input, drive_buf) &&
+                input[2] == '\\' &&
+                input[7] == '\0' &&
+                _stricmp(input + 3, "$MFT") == 0)
+            {
+                // case insensitive match for X:\\$MFT and quit
+                printf("--file mode cannot be used for volume mft %s", input);
+                exit(1);
+            }
+            
             if (!is_file(input)) {
                 printf("target input not a file: %s", input);
                 exit(0);
             }
+            
             flag_set = true;
-
             arg_index = 3; // shift
         }
     }
@@ -1073,9 +1123,9 @@ int main(int argc, char *argv[]) {
     uint64_t target_recno = 0;
     bool has_target = false;
 
-    bool deleted = true;  // default is to show all records
+    bool deleted = true;  // show all records
 
-    bool csv = false;  // alternative output
+    bool csv = false;  // alternative output fmt
 
     // read any drive and or one optional argument
 
@@ -1160,13 +1210,13 @@ int main(int argc, char *argv[]) {
           arg_index++;
         
         // check for invalid
-        } else if (!strcmp(argv[arg_index], "--inuse") == 0) {
+        } else if (strcmp(argv[arg_index], "--inuse") != 0) {
             printf("Unknown option %s\n", argv[arg_index]);
             return 1;
         }
         
         // the --inuse flag was added in and for regular use only
-        // can save time by limiting console writes. Also later in python list iterating with a smaller list
+        // can save time by limiting console writes.
         // can be used with --csv
 
         if (argc > arg_index && !flag_set) {
@@ -1175,12 +1225,6 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-
-    // #ifdef _WIN32
-    // if (qt_output) {
-        // _setmode(_fileno(stdout), _O_BINARY);
-    // }
-    // #endif
 
     // original design
     // const uint64_t mft_offset = 0xC0000000ULL; // used fsutil fsinfo ntfsinfo C: for starting cluster.
@@ -1226,12 +1270,18 @@ int main(int argc, char *argv[]) {
     uint16_t bytesPerSector = 0;
     uint64_t bytesPerCluster = 0;
     uint64_t mftOffset = 0;
-    // these are listed below in has_target debug mode
+    // these are listed below in has_target diagnostic mode
 
     BootSector bootsector;
+    int res = 0;
 
     if (!input) {
-        Read(h, &bootsector, 0, sizeof(bootsector));
+        res = Read(h, &bootsector, 0, sizeof(bootsector));
+        if (res != ERR_OK) {
+            fprintf(stderr, "%s\n", error_string(res));
+            exit(res);
+        }
+
         /* verify drive */
         if (bootsector.bootSignature != 0xAA55) {
             fprintf(stderr, "Invalid boot sector signature\n");
@@ -1255,34 +1305,13 @@ int main(int argc, char *argv[]) {
     }
 
     // record 0
-    Read(h, buf, mftOffset, record_size);
+    res = Read(h, buf, mftOffset, record_size);
+    if (res != ERR_OK) {
+        fprintf(stderr, "%s\n", error_string(res));
+        exit(res);
+    }
 
     hrec = (FILE_RECORD_HEADER *)buf;
-
-    // print if diagnostic mode
-    if (has_target) {
-        printf("Record size:           %u\n", record_size);
-        printf("Bytes per cluster:     %llu\n", (unsigned long long)bytesPerCluster);
-        printf("Mft offset:            %llu\n", (unsigned long long)mftOffset);
-        printf("\n");
-        printf("Signature           : %.4s\n", hrec->signature);
-        printf("USA offset          : %u\n", hrec->usa_offset);
-        printf("USA count           : %u\n", hrec->usa_count);
-        printf("Sequence number     : %u\n", hrec->sequence_number);
-        printf("Hard link count     : %u\n", hrec->hard_link_count);
-        printf("First attr offset   : %u\n", hrec->first_attr_offset);
-        printf("Flags               : 0x%04x\n", hrec->flags);
-        printf("Used size           : %u\n", hrec->used_size);
-        printf("Allocated size      : %u\n", hrec->allocated_size);
-        printf("Base record         : %llu\n", (unsigned long long)hrec->base_record);
-        printf("Next attr id        : %u\n", hrec->next_attr_id);
-        printf("Record number       : %u\n", hrec->record_number);
-    }
-
-    if (input) {
-        record_size = hrec->allocated_size;
-        bytesPerSector = record_size / (hrec->usa_count - 1);
-    }
 
     if (!apply_usa(buf, bytesPerSector)) {
         fprintf(stderr, "USA fixup failed\n");
@@ -1296,33 +1325,80 @@ int main(int argc, char *argv[]) {
         // printf("Looks like a FILE record\n");  // success
     // }
 
-    uint64_t record_count = 0;
+    if (input) {
+        record_size = hrec->allocated_size;
+        bytesPerSector = record_size / (hrec->usa_count - 1);
+    }
 
-    // write mft
+    // print if diagnostic mode
+    if (has_target) {
+        printf("Record size:           %u\n", record_size);
+        printf("Bytes per sector:      %hu\n", bytesPerSector);
+        printf("Bytes per cluster:     %llu\n", (unsigned long long)bytesPerCluster);
+        printf("Mft offset:            %llu\n", (unsigned long long)mftOffset);
+        printf("\n");
+        printf("Signature           : %.4s\n", hrec->signature);
+        printf("USA offset          : %u\n", hrec->usa_offset);
+        printf("USA count           : %u\n", hrec->usa_count);
+        printf("Sequence number     : %u\n", hrec->sequence_number);
+        // printf("Hard link count     : %u\n", hrec->hard_link_count);
+        printf("First attr offset   : %u\n", hrec->first_attr_offset);
+        printf("Flags               : 0x%04x\n", hrec->flags);
+        printf("Used size           : %u\n", hrec->used_size);
+        printf("Allocated size      : %u\n", hrec->allocated_size);
+        printf("Base record         : %llu\n", (unsigned long long)hrec->base_record);
+        printf("Next attr id        : %u\n", hrec->next_attr_id);
+        printf("Record number       : %u\n", hrec->record_number);
+    }
+
+    bool console = false;
+    uint64_t record_count = 0;
+    uint32_t processed = 0;
+
+    // write - mft dump
     if (output) {
-        WriteAttributes(h, o, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector);
+        ParseAttributes(MODE_WRITE, h, o, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector, NULL, false, false);
         free_processed(buf);
         CloseHandle(o);
         CloseHandle(h);
         exit(0);
         
-    // normal mft parse
+    // normal - mft parse
     } else if (!input) {
-        record_count = ParseAttributes(h, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector, deleted, has_target);
+
+        res = ParseAttributes(MODE_PARSE, h, NULL, buf, record_size, hrec, bytesPerCluster, bootsector.bytesPerSector, &record_count, deleted, has_target);
         
-    // read saved mft
+    // read - saved mft parse
     } else if (input) {
-        record_count = ReadAttributes(h, buf, record_size, hrec, bytesPerSector);
+
+        res = ParseAttributes(MODE_READ, h, NULL, buf, record_size, hrec, 0, bytesPerSector, &record_count, false, false);
+
     }
 
-    // parsing complete
+    // did an error occur. out of memory realloc strdup malloc fail just quit
+    if (res != 0) {
+        CloseHandle(h);
+        fprintf(stderr,"%s\n", error_string(res));
+        exit(res);
+    }
+
+    CloseHandle(h);
+    h = INVALID_HANDLE_VALUE;
 
     /* output area */
 
-    if (record_count) {
-       
-        char path[MAX_PTH];
+    // are there any results to output?
+    if (entry_count) {
 
+        // how many records and how many are being output to stdout
+        if (!has_target) {
+
+            processed = (uint32_t)entry_count;
+
+            fprintf(stderr,"Total mft records   : %lu\nRecords parsed      : %lu\n", (unsigned long)record_count, (unsigned long)processed);
+        }
+
+        char path[MAX_PTH];
 
         // check extension records for over flows ie name missing <--
         for (uint32_t i = 0; i < ext_count; i++) {
@@ -1345,12 +1421,12 @@ int main(int argc, char *argv[]) {
             
             /* regular output format */
             if (!csv) {
-                printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
+                printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path\n");
                 
                 for (uint32_t recno = 0; recno < max_count + 1; recno++) {
-                    if (!deleted && !entries[recno].in_use)
-                        continue;
                     if (!entries[recno].name)
+                        continue;
+                    if (!deleted && !entries[recno].in_use)
                         continue;
 
                     if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
@@ -1358,7 +1434,7 @@ int main(int argc, char *argv[]) {
                         parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
                         parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
 
-                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
+                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,%llu,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
                             (unsigned long long)parent_recno,
@@ -1373,17 +1449,18 @@ int main(int argc, char *argv[]) {
                             (unsigned long)entries[recno].file_attribs,
                             entries[recno].is_dir ? "[DIR]" : "[FILE]",
                             (int) entries[recno].has_ads,
+                            (unsigned long long)entries[recno].usn,
                             entries[recno].name,
                             path);
 
                         // print all hardlinks
-                        for (uint32_t i = 0; i < entries[recno].link_count; i++) {
+                        for (uint16_t i = 0; i < entries[recno].link_count; i++) {
                             LinkEntry *lnk = &links[entries[recno].link_index + i];
                             if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
 
-                                parent_recno = (uint32_t)(entries[recno].parent_frn & FRN_RECORD_MASK);
-                                parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
-                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,\"%s\",\"%s\"\n",
+                                parent_recno = lnk->parent_frn & FRN_RECORD_MASK;
+                                parent_seq = (uint16_t)(lnk->parent_frn >> 48);
+                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,%llu,\"%s\",\"%s\"\n",
                                     (unsigned long)lnk->recno,
                                     entries[recno].sequence_num,
                                     (unsigned long long)parent_recno,
@@ -1398,6 +1475,7 @@ int main(int argc, char *argv[]) {
                                     (unsigned long)entries[recno].file_attribs,
                                     "[HLINK]",
                                     (int) entries[recno].has_ads,
+                                    (unsigned long long)entries[recno].usn,
                                     lnk->name,
                                     path);
                             }
@@ -1411,7 +1489,7 @@ int main(int argc, char *argv[]) {
             } else {
                 char mt[64], ct[64], mft[64], at[64];
 
-                printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,name,path\n");
+                printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path\n");
 
                 for (uint32_t recno = 0; recno < max_count + 1; recno++) {
                     if (!entries[recno].name)
@@ -1433,7 +1511,7 @@ int main(int argc, char *argv[]) {
                         // printf("attrs=0x%08X\n", attrs);
                         // printf("%lu", (unsigned long)entries[recno].file_attribs);
 
-                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
+                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,%llu,\"%s\",\"%s\"\n",
                             (unsigned long)recno,
                             entries[recno].sequence_num,
                             (unsigned long long)parent_recno,
@@ -1448,15 +1526,18 @@ int main(int argc, char *argv[]) {
                             attrs,
                             entries[recno].is_dir ? "[DIR]" : "[FILE]",
                             (int) entries[recno].has_ads,
+                            (unsigned long long)entries[recno].usn,
                             entries[recno].name,
                             path);
 
                         // print all hardlinks
-                        for (uint32_t i = 0; i < entries[recno].link_count; i++) {
+                        for (uint16_t i = 0; i < entries[recno].link_count; i++) {
                             LinkEntry *lnk = &links[entries[recno].link_index + i];
                             if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
 
-                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,\"%s\",\"%s\"\n",
+                                parent_recno = lnk->parent_frn & FRN_RECORD_MASK;
+                                parent_seq = (uint16_t)(lnk->parent_frn >> 48);
+                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,%llu,\"%s\",\"%s\"\n",
                                     (unsigned long)lnk->recno,
                                     entries[recno].sequence_num,
                                     (unsigned long long)parent_recno,
@@ -1471,6 +1552,7 @@ int main(int argc, char *argv[]) {
                                     attrs,
                                     "[HLINK]",
                                     (int) entries[recno].has_ads,
+                                    (unsigned long long)entries[recno].usn,
                                     lnk->name,
                                     path);
                             }
@@ -1533,6 +1615,9 @@ int main(int argc, char *argv[]) {
             }
 
             if (recno <= max_count) {
+
+                printf("Total mft records   : %lu\nRecords parsed      : %lu\n", (unsigned long)record_count, (unsigned long)entry_count);
+
                 FileEntry *e = &entries[recno];
 
                 if (is_frn && e->sequence_num != seq_no) {
@@ -1556,8 +1641,8 @@ int main(int argc, char *argv[]) {
                 const char *notc = (attrs & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED) ? " [NOTINDEXED]" : "";
                 printf("=== DEBUG RECORD %u ===\n", e->record_number);
 
-                printf("flags=0x%08X%s%s%s%s%s%s%s\n",
-                    attrs, ro, hid, sys, arc, rep, spa, rec);
+                printf("flags=0x%08X%s%s%s%s%s%s%s%s\n",
+                    attrs, ro, hid, sys, arc, rep, spa, rec, notc);
                 // printf("file_attributes=0x%08X\n", entries[i].file_attribs);
 
                 printf("frn=%llu\n", (unsigned long long)e->frn);
@@ -1622,11 +1707,12 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
+    } else {
+        fprintf(stderr, "no records returned failed to parse\n");
     }
 
     free_processed(buf);
 
-    CloseHandle(h);
     return ret;
 
     cleanup:

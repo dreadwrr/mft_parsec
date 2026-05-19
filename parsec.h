@@ -1,3 +1,6 @@
+#ifndef PARSEC_H
+#define PARSEC_H
+
 #include <stdint.h>
 #include <windows.h>
 #include <stdbool.h>
@@ -5,8 +8,29 @@
 #define MAX_PTH 8192
 #define CHUNK_SIZE (64ULL * 1024ULL * 1024ULL)  //  read mft in 64MB chunks
 #define FRN_RECORD_MASK 0x0000FFFFFFFFFFFFULL
-#define MFT_FILE_ATTRIBUTE_DIRECTORY 0x2000
 
+typedef enum {
+    MODE_PARSE,
+    MODE_WRITE,
+    MODE_READ
+} ParseMode;
+
+typedef enum {
+    ERR_OK = 0,
+    PARSE_LINK_ALLOC,
+    PARSE_ENTRY_OF,
+    PARSE_ENTRY_ALLOC,
+    PARSE_EXTN_ALLOC,
+    PARSE_LINK_STRDUP,
+    PARSE_EXTN_STRDUP,
+    PARSE_MEM_ALLOC,
+    PARSE_FAIL,
+    READ_PTR,
+    READ_FAIL,
+    READ_SHORT,
+    READ_MEM_ALLOC
+} ErrorCode;
+        
 #pragma pack(push, 1)
 typedef struct {
     char     signature[4];
@@ -45,8 +69,8 @@ typedef struct {
 
 typedef struct {
     ATTR_HEADER common;
-    uint64_t lowest_vcn;     // first cluster
-    uint64_t highest_vcn;    // last cluster
+    uint64_t lowest_vcn;     // first virtual cluster
+    uint64_t highest_vcn;    // last
     uint16_t run_offset;     // offset to data runs
     uint8_t compression_unit;
     uint8_t reserved[5];
@@ -56,7 +80,7 @@ typedef struct {
     uint64_t compressed_size;
 } NONRES_ATTR_HEADER;
 
-// RESIDENT_ATTR_HEADER; // originally was first field below, see ln 244 parsec.c
+// RESIDENT_ATTR_HEADER; // originally was first field below, see ln 267 parsec.c
 typedef struct {
     uint64_t creation_time;
     uint64_t modification_time;
@@ -72,7 +96,7 @@ typedef struct {
     uint64_t usn;
 } STANDARD_INFORMATION_ATTR;
 
-// RESIDENT_ATTR_HEADER resident; // originally was first field below, see ln 257 parsec.c
+// RESIDENT_ATTR_HEADER resident; // originally was first field below, see ln 304 parsec.c
 typedef struct {
     uint64_t parent_ref;
     uint64_t creation_time;
@@ -163,20 +187,26 @@ extern LinkEntry *links;
 extern uint32_t link_count;
 extern uint32_t link_capacity;
 extern FileEntry *entries;
-extern uint32_t entry_count;
 extern uint32_t max_count;
 extern uint32_t entry_capacity;
 extern ExtEntry *ext;
 extern uint32_t ext_count;
 extern uint32_t ext_capacity;
+extern uint32_t entry_count;
+extern char g_last_error[256];
 
+const char* error_string(ErrorCode err);
 uint32_t GetFileRecordSize(const BootSector *bs);
 int apply_usa(unsigned char *buf, uint16_t bytesPerSector);
-void Read(HANDLE drive, void *buffer, uint64_t from, DWORD count);
-void EnsureEntryCapacity(uint32_t recno);
+int Read(HANDLE drive, void *buffer, uint64_t from, DWORD count);
+int EnsureEntryCapacity(uint32_t recno);
 int BuildDirPath(uint32_t recno, char *out, size_t outSize);
 int BuildPath(uint32_t recno, const char *name, uint16_t name_len, char *out, size_t outSize);
+int get_drive(const char *path, char out[3]);
 uint64_t ntfs_to_epoch_us(uint64_t ntfs);
 uint64_t ParseDatetimeToNtfs(const char *input);
-uint64_t ParseAttributes(HANDLE h, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, uint16_t bytesPerSector, bool deleted, bool has_target);
+int ParseAttributes(ParseMode mode, HANDLE h, HANDLE o, unsigned char *buf, uint32_t record_size, FILE_RECORD_HEADER *hrec, uint64_t bytesPerCluster, 
+                    uint16_t bytesPerSector, uint64_t *record_count, bool deleted, bool has_target);
 void free_processed(unsigned char *buff);
+
+#endif
