@@ -5,7 +5,7 @@ project name parsec or parse c
 
 Parse master file table
 
-After the initial release added expanded on the design. if searching for new files with --cutoff it is system time. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and the
+After the initial release added to the design. if searching for new files with --cutoff it is system time. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and the
 reason I made it is for my qt app that uses MFT features and needed a solution for that. Will continue to research the mft and monitor for other needed changes.
 
 usage:
