@@ -471,6 +471,152 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
     return res;
 }
 
+void PrintRuns (FILE *out, FileEntry *entries, char *path, size_t path_size, bool csv, bool deleted) {
+
+    uint32_t attrs = 0;
+    uint64_t parent_recno = 0;
+    uint16_t parent_seq = 0;
+
+    fprintf(out, "recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path\n");
+
+    /* regular output format */
+    if (!csv) {
+
+        fprintf(out, "recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path\n");
+        for (uint32_t recno = 0; recno < max_count + 1; recno++) {
+            if (!entries[recno].name)
+                continue;
+            if (!deleted && !entries[recno].in_use)
+                continue;
+
+            if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, path_size)) {
+
+                parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
+                parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
+
+                fprintf(out, "%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,%llu,\"%s\",\"%s\"\n",
+                    (unsigned long)recno,
+                    entries[recno].sequence_num,
+                    (unsigned long long)parent_recno,
+                    parent_seq,
+                    (int) entries[recno].in_use,
+                    (unsigned long long)entries[recno].size,
+                    entries[recno].hard_link_count,
+                    (unsigned long long)entries[recno].modification_time,
+                    (unsigned long long)entries[recno].creation_time,
+                    (unsigned long long)entries[recno].mft_modification_time,
+                    (unsigned long long)entries[recno].access_time,
+                    (unsigned long)entries[recno].file_attribs,
+                    entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                    (int) entries[recno].has_ads,
+                    (unsigned long long)entries[recno].usn,
+                    entries[recno].name,
+                    path);
+
+                // print all hardlinks
+                for (uint16_t i = 0; i < entries[recno].link_count; i++) {
+                    LinkEntry *lnk = &links[entries[recno].link_index + i];
+                    if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, path_size)) {
+
+                        parent_recno = lnk->parent_frn & FRN_RECORD_MASK;
+                        parent_seq = (uint16_t)(lnk->parent_frn >> 48);
+                        fprintf(out, "%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,%llu,\"%s\",\"%s\"\n",
+                            (unsigned long)lnk->recno,
+                            entries[recno].sequence_num,
+                            (unsigned long long)parent_recno,
+                            parent_seq,
+                            (int) entries[recno].in_use,
+                            (unsigned long long)entries[recno].size,
+                            entries[recno].hard_link_count,
+                            (unsigned long long)entries[recno].modification_time,
+                            (unsigned long long)entries[recno].creation_time,
+                            (unsigned long long)entries[recno].mft_modification_time,
+                            (unsigned long long)entries[recno].access_time,
+                            (unsigned long)entries[recno].file_attribs,
+                            "[HLINK]",
+                            (int) entries[recno].has_ads,
+                            (unsigned long long)entries[recno].usn,
+                            lnk->name,
+                            path);
+                    }
+                }
+            }
+        }
+    /* write different format than default */
+    } else {
+        char mt[64], ct[64], mft[64], at[64];
+
+        for (uint32_t recno = 0; recno < max_count + 1; recno++) {
+            if (!entries[recno].name)
+                continue;
+            if (!deleted && !entries[recno].in_use)
+                continue;
+
+            if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, path_size)) {
+
+                parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
+                parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
+
+                FormatFileTime(entries[recno].modification_time, mt, sizeof(mt));
+                FormatFileTime(entries[recno].creation_time, ct, sizeof(ct));
+                FormatFileTime(entries[recno].mft_modification_time, mft, sizeof(mft));
+                FormatFileTime(entries[recno].access_time, at, sizeof(at));
+
+                attrs = entries[recno].file_attribs;
+                // printf("attrs=0x%08X\n", attrs);
+                // printf("%lu", (unsigned long)entries[recno].file_attribs);
+
+                fprintf(out, "%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,%llu,\"%s\",\"%s\"\n",
+                    (unsigned long)recno,
+                    entries[recno].sequence_num,
+                    (unsigned long long)parent_recno,
+                    parent_seq,
+                    (int) entries[recno].in_use,
+                    (unsigned long long)entries[recno].size,
+                    entries[recno].hard_link_count,
+                    mt,
+                    ct,
+                    mft,
+                    at,
+                    attrs,
+                    entries[recno].is_dir ? "[DIR]" : "[FILE]",
+                    (int) entries[recno].has_ads,
+                    (unsigned long long)entries[recno].usn,
+                    entries[recno].name,
+                    path);
+
+                // print all hardlinks
+                for (uint16_t i = 0; i < entries[recno].link_count; i++) {
+                    LinkEntry *lnk = &links[entries[recno].link_index + i];
+                    if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, path_size)) {
+
+                        parent_recno = lnk->parent_frn & FRN_RECORD_MASK;
+                        parent_seq = (uint16_t)(lnk->parent_frn >> 48);
+                        fprintf(out, "%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,%llu,\"%s\",\"%s\"\n",
+                            (unsigned long)lnk->recno,
+                            entries[recno].sequence_num,
+                            (unsigned long long)parent_recno,
+                            parent_seq,
+                            (int) entries[recno].in_use,
+                            (unsigned long long)entries[recno].size,
+                            entries[recno].hard_link_count,
+                            mt,
+                            ct,
+                            mft,
+                            at,
+                            attrs,
+                            "[HLINK]",
+                            (int) entries[recno].has_ads,
+                            (unsigned long long)entries[recno].usn,
+                            lnk->name,
+                            path);
+                    }
+                }
+            } 
+        }
+    }
+}
+
 /* Read saved mft */
    
 int ReadRun(HANDLE h, uint64_t runBytes, uint16_t bytesPerSector, uint32_t startRecno, uint32_t record_size) {
@@ -1014,7 +1160,7 @@ void Help(char* argv[]) {
 }
 
 /**
-05/18/2026
+10/16/2026
 
 usage:
 
@@ -1036,8 +1182,8 @@ Note: the format is parser friendly and can be hard to read. use --csv for reada
 in addition --inuse can limit console writes and save time for regular mode.
 
 
-read saved mft relative or absolute
---file <raw mft>
+read saved mft relative or absolute. if mft dump record size or sector size is not default (1024 or 512 respectively)  specify directly after.
+--file <raw mft> and if needing --record_size <custom size> --sector_size <custom size> 
 
 and also can take 1 argument
 
@@ -1058,13 +1204,16 @@ int main(int argc, char *argv[]) {
         Help(argv);
     }
 
-    setvbuf(stdout, NULL, _IOFBF, 4 << 20);  // enable buffering
+    setvbuf(stdout, NULL, _IOFBF, 4 << 20);  // enable buffering remember to put back on
     
     HANDLE o;
     char *drive = "C:";  // default
     char drive_buf[3];
     int ret = 1;  // assume error
     int arg_index = 1;
+
+    uint32_t record_size = 10; // 24;  10/16/2026 moved here so if reading with --file can pass in different values. from ln 1455
+    uint16_t bytesPerSector = 51; // 2;  .
 
     size_t str_len = 0;
 
@@ -1075,7 +1224,7 @@ int main(int argc, char *argv[]) {
     if (argc >= 2) {
 
         str_len = strlen(argv[1]);
-
+        // drive
         if (str_len > 1 && str_len <= 3 &&
             isalpha((unsigned char) argv[1][0]) &&
             argv[1][1] == ':') {
@@ -1084,8 +1233,8 @@ int main(int argc, char *argv[]) {
                 drive = drive_buf;
                 arg_index = 2;  // shift
             }
-        } 
-        else if (strcmp(argv[1], "--file") == 0) {
+        // from file
+        } else if (strcmp(argv[1], "--file") == 0) {
             if (argc <= arg_index + 1) {
                 printf("--file no source file specified\n");
                 return 0;
@@ -1093,13 +1242,14 @@ int main(int argc, char *argv[]) {
 
             input = argv[arg_index + 1];
             
-            // this is file mode so exit if volume $MFT
-            if (get_drive(input, drive_buf) &&
+            // exit if volume $MFT ie X:\\$MFT
+            if (strlen(input) == 7 &&
+                get_drive(input, drive_buf) &&
                 input[2] == '\\' &&
                 input[7] == '\0' &&
                 _stricmp(input + 3, "$MFT") == 0)
             {
-                // case insensitive match for X:\\$MFT and quit
+                // case insensitive match for 
                 printf("--file mode cannot be used for volume mft %s", input);
                 exit(1);
             }
@@ -1111,6 +1261,47 @@ int main(int argc, char *argv[]) {
             
             flag_set = true;
             arg_index = 3; // shift
+
+            // 10/16/2026 added flags record_size and sector_size when reading mft dump
+            char *end;
+            unsigned long value;
+            int end_index = arg_index + 4;
+            if (end_index > argc) {
+                end_index = argc;
+            }
+            // grab the next two args in odd case record size or bytes per sector needs to be supplied
+            for (int i = arg_index; i < end_index; i++) {
+                if (strcmp(argv[i], "--record_size") == 0) {
+                    if (i + 1 >= argc) {
+                        printf("--record_size requires a value\n");
+                        exit(0);
+                    }
+                    value = strtoul(argv[++i], &end, 10);
+
+                    if (*argv[i] == '\0' || *end != '\0' ||
+                        value == 0 || value > UINT32_MAX) {
+                        printf("Invalid record size: %s\n", argv[i]);
+                        exit(0);
+                    }
+                    arg_index += 2;
+                    record_size = (uint32_t)value;
+                } else if (strcmp(argv[i], "--sector_size") == 0) {
+                    if (i + 1 >= argc) {
+                        printf("--sector_size requires a value\n");
+                        exit(0);
+                    }
+
+                    value = strtoul(argv[++i], &end, 10);
+
+                    if (*argv[i] == '\0' || *end != '\0' ||
+                        value == 0 || value > UINT16_MAX) {
+                        printf("Invalid sector size: %s\n", argv[i]);
+                        exit(0);
+                    }
+                    arg_index += 2;
+                    bytesPerSector = (uint16_t)value;
+                }
+            }
         }
     }
 
@@ -1131,6 +1322,11 @@ int main(int argc, char *argv[]) {
 
     const char *output = NULL;  // save or dump mode
 
+    // printf("argc %d", argc);
+    // printf("arg_index %d", arg_index);
+    // exit(0);
+
+    // parse remaining arguments which are different modes and mutually exclusive.
     if (argc > arg_index) {
 
         char arg_buf[64];
@@ -1184,6 +1380,23 @@ int main(int argc, char *argv[]) {
             // printf("%s", arg_buf);
 
             output = argv[arg_index + 1];
+
+            // check that the output cant somehow be a drive MFT ie \\\\.\\X:
+            if (strlen(output) >= 2 &&
+                output[0] == '\\' &&
+                output[1] == '\\') {
+                printf("Output cannot be a device path\n");
+                return 1;
+            }
+            // exit if output is in volume $MFT format ie X:\\$MFT
+            if (strlen(output) == 7 &&
+                output[2] == '\\' &&
+                output[7] == '\0' &&
+                _stricmp(output + 3, "$MFT") == 0) {
+                printf("volume mft: %s cannot be used for output", output);
+                return 1;
+            }
+
             o = CreateFileA(
                 output,
                 GENERIC_WRITE,
@@ -1208,16 +1421,14 @@ int main(int argc, char *argv[]) {
                 // }
             // }
           arg_index++;
-        
-        // check for invalid
+
         } else if (strcmp(argv[arg_index], "--inuse") != 0) {
             printf("Unknown option %s\n", argv[arg_index]);
             return 1;
         }
         
-        // the --inuse flag was added in and for regular use only
+        // the --inuse flag was added in and for drive mft parsing or regular use.
         // can save time by limiting console writes.
-        // can be used with --csv
 
         if (argc > arg_index && !flag_set) {
             if (strcmp(argv[arg_index], "--inuse") == 0) {
@@ -1265,9 +1476,8 @@ int main(int argc, char *argv[]) {
 
         goto cleanup;
     }
-
-    uint32_t record_size = 1024;
-    uint16_t bytesPerSector = 0;
+    // uint32_t record_size = 1024;
+    // uint16_t bytesPerSector = 512;
     uint64_t bytesPerCluster = 0;
     uint64_t mftOffset = 0;
     // these are listed below in has_target diagnostic mode
@@ -1418,149 +1628,9 @@ int main(int argc, char *argv[]) {
 
         /* print mft entries for run */
         if (cutoff_time == 0 && !has_target) {
-            
-            /* regular output format */
-            if (!csv) {
-                printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path\n");
-                
-                for (uint32_t recno = 0; recno < max_count + 1; recno++) {
-                    if (!entries[recno].name)
-                        continue;
-                    if (!deleted && !entries[recno].in_use)
-                        continue;
 
-                    if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
-
-                        parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
-                        parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
-
-                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,%llu,\"%s\",\"%s\"\n",
-                            (unsigned long)recno,
-                            entries[recno].sequence_num,
-                            (unsigned long long)parent_recno,
-                            parent_seq,
-                            (int) entries[recno].in_use,
-                            (unsigned long long)entries[recno].size,
-                            entries[recno].hard_link_count,
-                            (unsigned long long)entries[recno].modification_time,
-                            (unsigned long long)entries[recno].creation_time,
-                            (unsigned long long)entries[recno].mft_modification_time,
-                            (unsigned long long)entries[recno].access_time,
-                            (unsigned long)entries[recno].file_attribs,
-                            entries[recno].is_dir ? "[DIR]" : "[FILE]",
-                            (int) entries[recno].has_ads,
-                            (unsigned long long)entries[recno].usn,
-                            entries[recno].name,
-                            path);
-
-                        // print all hardlinks
-                        for (uint16_t i = 0; i < entries[recno].link_count; i++) {
-                            LinkEntry *lnk = &links[entries[recno].link_index + i];
-                            if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
-
-                                parent_recno = lnk->parent_frn & FRN_RECORD_MASK;
-                                parent_seq = (uint16_t)(lnk->parent_frn >> 48);
-                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%llu,%llu,%llu,%llu,%lu,%s,%d,%llu,\"%s\",\"%s\"\n",
-                                    (unsigned long)lnk->recno,
-                                    entries[recno].sequence_num,
-                                    (unsigned long long)parent_recno,
-                                    parent_seq,
-                                    (int) entries[recno].in_use,
-                                    (unsigned long long)entries[recno].size,
-                                    entries[recno].hard_link_count,
-                                    (unsigned long long)entries[recno].modification_time,
-                                    (unsigned long long)entries[recno].creation_time,
-                                    (unsigned long long)entries[recno].mft_modification_time,
-                                    (unsigned long long)entries[recno].access_time,
-                                    (unsigned long)entries[recno].file_attribs,
-                                    "[HLINK]",
-                                    (int) entries[recno].has_ads,
-                                    (unsigned long long)entries[recno].usn,
-                                    lnk->name,
-                                    path);
-                            }
-                        }
-                    } 
-                }
-
+                PrintRuns(stdout, entries, path, sizeof(path), csv, deleted);
                 ret = 0;
-                
-            /* write different format than default */
-            } else {
-                char mt[64], ct[64], mft[64], at[64];
-
-                printf("recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path\n");
-
-                for (uint32_t recno = 0; recno < max_count + 1; recno++) {
-                    if (!entries[recno].name)
-                        continue;
-                    if (!deleted && !entries[recno].in_use)
-                        continue;
-
-                    if (BuildPath(recno, entries[recno].name, entries[recno].name_len, path, sizeof(path))) {
-
-                        parent_recno = entries[recno].parent_frn & FRN_RECORD_MASK;
-                        parent_seq = (uint16_t)(entries[recno].parent_frn >> 48);
-
-                        FormatFileTime(entries[recno].modification_time, mt, sizeof(mt));
-                        FormatFileTime(entries[recno].creation_time, ct, sizeof(ct));
-                        FormatFileTime(entries[recno].mft_modification_time, mft, sizeof(mft));
-                        FormatFileTime(entries[recno].access_time, at, sizeof(at));
-
-                        attrs = entries[recno].file_attribs;
-                        // printf("attrs=0x%08X\n", attrs);
-                        // printf("%lu", (unsigned long)entries[recno].file_attribs);
-
-                        printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,%llu,\"%s\",\"%s\"\n",
-                            (unsigned long)recno,
-                            entries[recno].sequence_num,
-                            (unsigned long long)parent_recno,
-                            parent_seq,
-                            (int) entries[recno].in_use,
-                            (unsigned long long)entries[recno].size,
-                            entries[recno].hard_link_count,
-                            mt,
-                            ct,
-                            mft,
-                            at,
-                            attrs,
-                            entries[recno].is_dir ? "[DIR]" : "[FILE]",
-                            (int) entries[recno].has_ads,
-                            (unsigned long long)entries[recno].usn,
-                            entries[recno].name,
-                            path);
-
-                        // print all hardlinks
-                        for (uint16_t i = 0; i < entries[recno].link_count; i++) {
-                            LinkEntry *lnk = &links[entries[recno].link_index + i];
-                            if (BuildPath(lnk->recno, lnk->name, lnk->name_len, path, sizeof(path))) {
-
-                                parent_recno = lnk->parent_frn & FRN_RECORD_MASK;
-                                parent_seq = (uint16_t)(lnk->parent_frn >> 48);
-                                printf("%lu,%hu,%llu,%hu,%d,%llu,%hu,%s,%s,%s,%s,0x%08X,%s,%d,%llu,\"%s\",\"%s\"\n",
-                                    (unsigned long)lnk->recno,
-                                    entries[recno].sequence_num,
-                                    (unsigned long long)parent_recno,
-                                    parent_seq,
-                                    (int) entries[recno].in_use,
-                                    (unsigned long long)entries[recno].size,
-                                    entries[recno].hard_link_count,
-                                    mt,
-                                    ct,
-                                    mft,
-                                    at,
-                                    attrs,
-                                    "[HLINK]",
-                                    (int) entries[recno].has_ads,
-                                    (unsigned long long)entries[recno].usn,
-                                    lnk->name,
-                                    path);
-                            }
-                        }
-                    } 
-                }
-                ret = 0;
-            }
 
         /* search by time */
         } else if (cutoff_time > 0) {
