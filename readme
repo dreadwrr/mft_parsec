@@ -21,8 +21,8 @@ dump a drive mft to file
 
 note --output cannot be used with any argument below **
 
-read from file relative or absolute
---file <mft raw>
+read saved mft relative or absolute. if mft dump record size or sector size is not default (1024 or 512 respectively)  specify directly after.
+--file <raw mft> and if needing --record_size <custom size> --sector_size <custom size> 
 
 will write to stdout csv format:
 recno,sequence,parent_recno,parent_sequence,in_use,size,hard_link_count,modification_time,creation_time,mft_modified,access_time,file_attribs,type,has_ads,last_usn,name,path
