@@ -208,7 +208,7 @@ int AppendLink(uint32_t recno, uint64_t frn, uint64_t parent_frn, const char *na
     return 0;
 }
 
-int AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t parent_frn, const char *name) {
+int AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t parent_frn, const char *name, uint16_t name_len, uint64_t size) {
     if (EnsureExtCapacity() != 0)
         return PARSE_EXTN_ALLOC;
 
@@ -217,7 +217,9 @@ int AppendExtension(uint32_t recno, uint32_t base_recno, uint64_t frn, uint64_t 
     ext[ext_count].frn = frn;
     ext[ext_count].parent_frn = parent_frn;
     ext[ext_count].name = _strdup(name);
+    // ext[ext_count].name_len = name_len;
     ext[ext_count].name_len = (uint16_t)strlen(name);
+    ext[ext_count].size = size;
     if (!ext[ext_count].name) {
         return PARSE_EXTN_STRDUP;
     }
@@ -252,6 +254,7 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
     int name_count = 0;
 
     uint8_t got_name = 0;
+    uint8_t got_size = 0;
 
     char best_name[1024] = {0};
     uint16_t best_name_len = 0;
@@ -313,6 +316,29 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
             usn = si->usn;
             // is_reparse = (si->file_attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? 1 : 0;
         }
+        // alternative with parsing 0x20 but no need currently
+        // data_in_ext && !got_size instead of the 0x80 method . 10/16/2026 fix for missing size due to no unnamed 0x80 $DATA
+    
+        // if (hrec->base_record == 0 && attr->type == 0x20 && attr->non_resident == 0) {
+            // RESIDENT_ATTR_HEADER *r = (RESIDENT_ATTR_HEADER *)attr;
+            
+            // if ((uint32_t)r->value_offset + r->value_length <= attr->length) {
+                // uint8_t *p = (uint8_t *)attr + r->value_offset;
+                // uint32_t off = 0;
+
+                // while (off + sizeof(ATTRIBUTE_LIST_ENTRY) <= r->value_length) {
+                    // ATTRIBUTE_LIST_ENTRY *e = (ATTRIBUTE_LIST_ENTRY *)(p + off);
+                    // if (e->length == 0)
+                        // break;
+
+                    // if (e->type == 0x80 && e->name_length == 0 &&
+                        // (e->file_reference & 0x0000FFFFFFFFFFFFULL) != hrec->record_number)  // its in the extension record if size is missing from 0x80 this method is more strict
+                        // data_in_ext = 1;
+
+                    // off += e->length;
+                // }
+            // }
+        // }
 
         if (attr->type == 0x30 && attr->non_resident == 0) {
             RESIDENT_ATTR_HEADER *res = (RESIDENT_ATTR_HEADER *)attr;  // not used originally. updated to use value_offset <--
@@ -375,6 +401,8 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
             }
         }
 
+        // if its vcn 0 the filesize can be read in some cases that attribute can be in extension
+
         if (attr->type == 0x80) {
             if (attr->name_length != 0) {
                 // skip ADS
@@ -385,13 +413,12 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
             if (attr->non_resident == 0) {
                 RESIDENT_ATTR_HEADER *ndata = (RESIDENT_ATTR_HEADER *)attr;
                 size = ndata->value_length;
-
+                got_size = 1;
             } else {
                 NONRES_ATTR_HEADER *ndata = (NONRES_ATTR_HEADER *)attr;
                 size = ndata->real_size;
+                got_size = (ndata->lowest_vcn == 0);
             }
-
-
         }
         attr = (ATTR_HEADER *)((unsigned char *)attr + attr->length);
     }
@@ -421,7 +448,7 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
         entries[recno].name_len = best_name_len;
 
         entries[recno].size = size;
-
+        entries[recno].need_size = (!got_size && !is_dir);  // working on 10/16/2026
         entries[recno].in_use = in_use;
         // entries[recno].in_use = 1;
 
@@ -456,14 +483,16 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
         }
     // extension record
     } else {
-        if (got_name) {
+        if (got_name || got_size) {
 
             res = AppendExtension(
                 recno,
                 (uint32_t)(frn & FRN_RECORD_MASK),
                 frn,
                 best_parent_frn,
-                best_name
+                best_name,
+                best_name_len,
+                size
             );
         }
     }
@@ -1611,6 +1640,7 @@ int main(int argc, char *argv[]) {
         char path[MAX_PTH];
 
         // check extension records for over flows ie name missing <--
+        // for missing filesize ie no 0x80
         for (uint32_t i = 0; i < ext_count; i++) {
             uint32_t b = ext[i].base_recno;
 
@@ -1619,6 +1649,11 @@ int main(int argc, char *argv[]) {
                 entries[b].name = _strdup(ext[i].name);
                 entries[b].name_len = ext[i].name_len;
                 entries[b].parent_frn = ext[i].parent_frn;
+            }
+
+            if (ext[i].size && entries[b].need_size && entries[b].frn == ext[i].frn) {
+                entries[b].size = ext[i].size;
+                entries[b].need_size = 0;
             }
         }
 
