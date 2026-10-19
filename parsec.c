@@ -500,7 +500,7 @@ int ProcessRecord(unsigned char *buf, uint16_t bytesPerSector, uint32_t recno, u
     return res;
 }
 
-void PrintRuns (FILE *out, FileEntry *entries, char *path, size_t path_size, bool csv, bool deleted) {
+void PrintRuns(FILE *out, FileEntry *entries, char *path, size_t path_size, bool csv, bool deleted) {
 
     uint32_t attrs = 0;
     uint64_t parent_recno = 0;
@@ -1419,8 +1419,8 @@ int main(int argc, char *argv[]) {
             }
             // exit if output is in volume $MFT format ie X:\\$MFT
             if (strlen(output) == 7 &&
+                output[1] == ':' &&
                 output[2] == '\\' &&
-                output[7] == '\0' &&
                 _stricmp(output + 3, "$MFT") == 0) {
                 printf("volume mft: %s cannot be used for output", output);
                 return 1;
