@@ -7,6 +7,10 @@ Parse master file table
 
 After the initial release added to the design. if searching for new files with --cutoff it is system time. Chose c as the job suites it perfectly. The filesize of the parser is 170kb and the reason I made it is for my qt app that uses MFT features and needed a solution for that. Will continue to research the mft and monitor for other needed changes.
 
+Find modified and new files on the system quickly with:
+.\\bin\\parsec.exe C: --cutoff "2026-06-15 07:13:18" \# or "2026-06-15T07:13:18"
+where the time is current local system time
+
 usage:
 
 optional drive (default C:)
